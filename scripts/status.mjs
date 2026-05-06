@@ -17,14 +17,33 @@ await runCli("status", async (options) => {
   const target = await detectOpencodeTarget({
     compat: manifest.compat,
     opencodeRoot: options.opencodeRoot,
+    installRoot: options.installRoot,
   });
-  const mode = resolveCompatibleMode(manifest, target);
+  const requestedInstallRoot = options.installRoot || target.installRoot;
+  const activeManagedInstall =
+    state?.mode === "managed-local-install" &&
+    state?.managedLocalInstall?.installRoot === requestedInstallRoot
+      ? state.managedLocalInstall
+      : undefined;
+  const mode = activeManagedInstall
+    ? {
+        id: "managed-local-install",
+        supported: true,
+        supportLevel: "alpha-managed-local-install",
+        patchRequired: false,
+        requiresCleanWorktree: false,
+        requiresCheckoutSource: true,
+        patchPath: undefined,
+      }
+    : resolveCompatibleMode(manifest, target);
   const targetLabel = target.root || target.execPath || target.method;
   const plugin = await inspectPlugin(
     manifest.pluginSourcePath,
     manifest.installedPluginPath,
   );
-  const supportedVersion = mode.supported;
+  const supportedVersion = activeManagedInstall
+    ? Boolean(activeManagedInstall.checkoutVersion)
+    : mode.supported;
   const patchPath = mode.patchPath;
   const patch =
     mode.patchRequired && target.root && patchPath
