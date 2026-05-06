@@ -60,6 +60,9 @@ await runCli("status", async (options) => {
   const managedLocalInstall = options.installRoot
     ? await inspectManagedLocalInstallRoot(options.installRoot, state)
     : await inspectManagedLocalInstall(state);
+  const managedStorage = state?.managedLocalInstall?.storage;
+  const managedStorageBackupRoot =
+    state?.managedLocalInstall?.storageBackupRoot;
 
   return {
     addon: {
@@ -79,6 +82,8 @@ await runCli("status", async (options) => {
     patch,
     worktree,
     managedLocalInstall,
+    managedStorage,
+    managedStorageBackupRoot,
     state,
     message: mode.supported
       ? `Target compatible detectado en ${targetLabel}`
@@ -90,6 +95,12 @@ await runCli("status", async (options) => {
       `mode: ${mode.id}`,
       `worktree: ${worktree.ok ? (worktree.message === "not_required" ? "not_required" : worktree.clean ? "clean" : "dirty") : "n/a"}`,
       `managed-local-install: ${managedLocalInstall.adopted ? "adopted" : mode.id === "managed-local-install" ? "available" : "inactive"}`,
+      managedStorage?.dbPath
+        ? `session db: ${managedStorage.dbPath}`
+        : "session db: unresolved",
+      managedStorageBackupRoot
+        ? `storage backup: ${managedStorageBackupRoot}`
+        : "storage backup: n/a",
     ],
   };
 });

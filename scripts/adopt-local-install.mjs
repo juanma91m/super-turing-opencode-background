@@ -5,25 +5,20 @@ import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { ensureCompatibleMode } from "../lib/compat.mjs";
 import {
   adoptManagedLocalInstall,
+  backupStorageRoots,
   detectBunPath,
   ensureBuiltOpencodeBinary,
   inspectManagedLocalInstall,
+  inspectManagedLocalInstallRoot,
   resolveBackupPath,
+  resolveStorageBackupPath,
+  resolveUserStoragePaths,
 } from "../lib/local-install.mjs";
 import { inspectHostHooks } from "../lib/hooks-check.mjs";
 
 await runCli("adopt-local-install", async (options) => {
   const manifest = await loadManifest();
   const previousState = await loadState(manifest.stateFile);
-  if (previousState?.mode === "managed-local-install") {
-    fail(
-      {
-        message:
-          "Ya existe una instalación local administrada registrada. Usá status o restore-local-install antes de volver a adoptar.",
-      },
-      3,
-    );
-  }
 
   if (!options.checkoutRoot) {
     fail(
@@ -92,7 +87,9 @@ await runCli("adopt-local-install", async (options) => {
     );
   }
 
-  const inspection = await inspectManagedLocalInstall(previousState);
+  const inspection = options.installRoot
+    ? await inspectManagedLocalInstallRoot(options.installRoot, previousState)
+    : await inspectManagedLocalInstall(previousState);
   if (inspection.adopted) {
     fail(
       {
@@ -104,10 +101,21 @@ await runCli("adopt-local-install", async (options) => {
   }
 
   const backupPath = resolveBackupPath(manifest.stateFile, installRoot);
+  const storage = resolveUserStoragePaths();
+  const storageBackupRoot = resolveStorageBackupPath(
+    manifest.stateFile,
+    installRoot,
+  );
+  const storageBackup = await backupStorageRoots({
+    storage,
+    backupRoot: storageBackupRoot,
+    dryRun: options.dryRun,
+  });
   const result = await adoptManagedLocalInstall({
     installRoot,
     backupPath,
     runtimeBinaryPath: runtimeBinary.binaryPath,
+    storage,
     addonId: manifest.addon.id,
     dryRun: options.dryRun,
   });
@@ -128,6 +136,9 @@ await runCli("adopt-local-install", async (options) => {
       bunPath,
       runtimeBinaryPath: runtimeBinary.binaryPath,
       runtimeBinaryState: runtimeBinary.state,
+      storage,
+      storageBackupRoot,
+      storageBackup,
       sourcePatchPath: sourceMode.patchPath,
     },
   };
@@ -148,6 +159,8 @@ await runCli("adopt-local-install", async (options) => {
       `bun: ${bunPath}`,
       `runtime binary: ${runtimeBinary.binaryPath}`,
       `binary prep: ${runtimeBinary.state}`,
+      `session db: ${storage.dbPath}`,
+      `storage backup: ${storageBackupRoot}`,
       `result: ${result.state}`,
     ],
   };
