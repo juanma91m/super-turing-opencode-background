@@ -15,6 +15,15 @@ await runCli("disable", async (options) => {
     opencodeRoot: options.opencodeRoot || state?.opencode?.root,
   });
   const mode = ensureCompatibleMode(manifest, target);
+  if (mode.id === "managed-local-install") {
+    fail(
+      {
+        message:
+          "Para instalaciones locales administradas usá restore-local-install en lugar de disable.",
+      },
+      2,
+    );
+  }
   const targetLabel = target.root || target.execPath || target.method;
   const patchPath = state?.patch?.path || mode.patchPath;
   const worktree =

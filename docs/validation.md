@@ -39,3 +39,21 @@ Expected result in the current environment when only a binary install is visible
 - target mode resolves to `unsupported`
 - no patch operation is attempted
 - the command explains that a compatible source checkout is required
+
+## Managed local install dry-run validation
+
+To validate takeover planning without touching the current install:
+
+```bash
+node ./scripts/adopt-local-install.mjs \
+  --checkout-root /path/to/opencode-checkout \
+  --bun-path /path/to/bun \
+  --dry-run
+```
+
+Expected result:
+
+- mode resolves to `managed-local-install`
+- a backup path is planned
+- the original install root is identified explicitly
+- no mutation is performed in dry-run mode

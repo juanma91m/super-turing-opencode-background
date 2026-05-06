@@ -28,7 +28,7 @@ En esta alpha, el addon no “instala magia”: administra de forma explícita u
 
 ## Modelo de modos
 
-El lifecycle está preparado para distinguir entre tres modos:
+El lifecycle está preparado para distinguir entre cuatro modos:
 
 - `patched-source-checkout`
   - modo soportado hoy
@@ -36,10 +36,16 @@ El lifecycle está preparado para distinguir entre tres modos:
 - `plugin-only`
   - modo objetivo futuro
   - pensado para versiones oficiales de OpenCode que ya incorporen los hooks host necesarios
+- `managed-local-install`
+  - takeover reversible de una instalación local `curl-binary`
+  - respalda `~/.opencode` como unidad y la reemplaza por una instalación administrada por el addon
 - `unsupported`
   - el addon detecta el target, pero no puede operarlo de forma segura con este alpha
 
-En esta versión, el único modo realmente soportado es `patched-source-checkout`.
+En esta versión, los modos realmente soportados son:
+
+- `patched-source-checkout`
+- `managed-local-install`
 
 ## Alcance de esta alpha
 
@@ -52,11 +58,24 @@ En esta versión, el único modo realmente soportado es `patched-source-checkout
 
 ### No soportado todavía
 
-| Escenario                              | Estado                        |
-| -------------------------------------- | ----------------------------- |
-| `~/.opencode/bin/opencode`             | ❌ no soportado en esta alpha |
-| `npm` / `pnpm` / `bun` / `yarn` global | ❌ no soportado en esta alpha |
-| `brew` / `scoop` / `choco`             | ❌ no soportado en esta alpha |
+| Escenario                                                  | Estado                        |
+| ---------------------------------------------------------- | ----------------------------- |
+| `~/.opencode/bin/opencode` como target directo/plugin-only | ❌ no soportado en esta alpha |
+| `npm` / `pnpm` / `bun` / `yarn` global                     | ❌ no soportado en esta alpha |
+| `brew` / `scoop` / `choco`                                 | ❌ no soportado en esta alpha |
+
+### Instalar sobre `curl-binary` de forma administrada
+
+| Escenario                                                                | Estado                                    |
+| ------------------------------------------------------------------------ | ----------------------------------------- |
+| Instalación local `curl-binary` en `~/.opencode` con takeover reversible | ✅ soportado como `managed-local-install` |
+
+#### Condiciones de este modo
+
+- requiere una instalación local detectable en `~/.opencode`
+- requiere un checkout fuente compatible pasado vía `--checkout-root`
+- requiere `bun` disponible en PATH o vía `--bun-path`
+- hace backup + replace + restore de la instalación local completa
 
 ## Filosofía del lifecycle
 
@@ -133,14 +152,29 @@ node ./scripts/reapply.mjs --opencode-root /ruta/al/opencode-checkout
 node ./scripts/smoke.mjs --opencode-root /ruta/al/opencode-checkout
 ```
 
+### Adoptar instalación local administrada
+
+```bash
+node ./scripts/adopt-local-install.mjs \
+  --checkout-root /ruta/al/opencode-checkout \
+  --bun-path /ruta/al/bun
+```
+
+### Restaurar instalación local original
+
+```bash
+node ./scripts/restore-local-install.mjs
+```
+
 ## Garantías de seguridad del MVP
 
 - `enable` y `reapply` validan compatibilidad exacta por versión.
-- el lifecycle deja explícito el modo compatible detectado (`patched-source-checkout`, `plugin-only`, `unsupported`).
+- el lifecycle deja explícito el modo compatible detectado (`patched-source-checkout`, `plugin-only`, `managed-local-install`, `unsupported`).
 - los comandos reales no operan sobre checkouts sucios.
 - `disable` no borra el plugin si detecta modificaciones manuales.
 - si el patch no está en un estado seguro para aplicar/revertir, el lifecycle falla.
 - los `dry-run` existen para validar flujo sin mutar estado.
+- `managed-local-install` no modifica el ELF en sitio: respalda y reemplaza la instalación local como unidad.
 
 ## Validación mínima recomendada
 
@@ -154,7 +188,8 @@ node ./scripts/smoke.mjs --opencode-root /ruta/al/opencode-checkout
 ## Limitaciones conocidas
 
 - el patch del host/core sigue siendo sensible a updates de OpenCode
-- la detección de instalación binaria/global está deliberadamente fuera de alcance en esta alpha
+- `managed-local-install` sigue siendo un MVP: necesita un checkout fuente preparado como base y no pretende cubrir todos los métodos de instalación.
+- la instalación binaria/global sigue fuera de alcance para el modo `plugin-only`
 - todavía no hay soporte universal cross-platform
 
 ## Licencia
@@ -166,6 +201,8 @@ Este proyecto se distribuye bajo **GNU GPL v3**. Ver `LICENSE`.
 - `docs/validation.md`
 - `docs/alpha-publication-notes.md`
 - `docs/upstream-readiness.md`
+- `docs/roadmap.md`
+- `docs/security-managed-local-install.md`
 
 ## Cómo presentar honestamente esta alpha
 

@@ -16,6 +16,15 @@ await runCli("enable", async (options) => {
     opencodeRoot: options.opencodeRoot,
   });
   const mode = ensureCompatibleMode(manifest, target);
+  if (mode.id === "managed-local-install") {
+    fail(
+      {
+        message:
+          "Para instalaciones locales tipo curl-binary usá adopt-local-install en lugar de enable.",
+      },
+      2,
+    );
+  }
   const targetLabel = target.root || target.execPath || target.method;
   const worktree =
     mode.patchRequired && target.root

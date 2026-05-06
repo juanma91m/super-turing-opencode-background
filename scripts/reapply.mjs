@@ -16,6 +16,15 @@ await runCli("reapply", async (options) => {
     opencodeRoot: options.opencodeRoot || previousState?.opencode?.root,
   });
   const mode = ensureCompatibleMode(manifest, target);
+  if (mode.id === "managed-local-install") {
+    fail(
+      {
+        message:
+          "Para instalaciones locales administradas usá adopt-local-install si necesitás re-adoptar el takeover en lugar de reapply.",
+      },
+      2,
+    );
+  }
   const targetLabel = target.root || target.execPath || target.method;
   const worktree =
     mode.patchRequired && target.root

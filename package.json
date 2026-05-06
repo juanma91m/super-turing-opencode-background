@@ -14,6 +14,8 @@
     "enable": "node ./scripts/enable.mjs",
     "disable": "node ./scripts/disable.mjs",
     "reapply": "node ./scripts/reapply.mjs",
+    "adopt-local-install": "node ./scripts/adopt-local-install.mjs",
+    "restore-local-install": "node ./scripts/restore-local-install.mjs",
     "smoke": "node ./scripts/smoke.mjs"
   }
 }

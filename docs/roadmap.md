@@ -5,8 +5,9 @@
 ### Estado actual
 
 - modo soportado hoy: `patched-source-checkout`
+- modo soportado para takeover local: `managed-local-install`
 - modo objetivo futuro: `plugin-only`
-- modo no soportado actual: instalaciones binarias/globales
+- modo no soportado actual: instalaciones binarias/globales como `plugin-only`
 
 ### Próximos pasos dependientes del addon
 

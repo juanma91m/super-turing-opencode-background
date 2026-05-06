@@ -61,6 +61,7 @@
         "supportLevel": "future-plugin-only",
         "requiresPatch": false,
         "requiresCleanWorktree": false,
+        "requiresCheckoutSource": false,
         "supportedVersions": [],
         "supportedDetectionMethods": [
           "source-checkout-explicit",
@@ -69,6 +70,15 @@
           "binary-or-global"
         ],
         "notes": "Reserved for future official OpenCode builds that ship the required host hooks."
+      },
+      "managed-local-install": {
+        "supportLevel": "alpha-managed-local-install",
+        "requiresPatch": false,
+        "requiresCleanWorktree": false,
+        "requiresCheckoutSource": true,
+        "supportedVersions": ["1.14.39"],
+        "supportedDetectionMethods": ["curl-binary"],
+        "notes": "Managed takeover of a local curl-based install with full backup and restore."
       }
     },
     "unsupportedMethods": ["not-found", "unknown"]
