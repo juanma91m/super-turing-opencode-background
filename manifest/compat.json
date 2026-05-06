@@ -1,22 +1,76 @@
 {
   "schemaVersion": 1,
   "opencode": {
-    "supportedVersions": ["1.14.39"],
-    "supportLevel": "alpha-source-checkout-only",
-    "supportedDetectionMethods": [
-      "source-checkout-explicit",
-      "source-checkout-cwd"
-    ],
-    "unsupportedMethods": [
-      "curl-binary",
-      "binary-or-global",
-      "not-found",
-      "unknown"
-    ],
+    "supportModel": "mode-based",
     "requiredMarkers": [
       "packages/opencode/package.json",
       "packages/plugin/src/tui.ts",
       "packages/opencode/src/cli/cmd/tui/routes/session/index.tsx"
-    ]
+    ],
+    "hostHooks": [
+      {
+        "id": "keybind-sequences",
+        "status": "generic-ok",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Exact multi-stroke support in the TUI keybind layer."
+      },
+      {
+        "id": "prompt-submit-intercept",
+        "status": "needs-review",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Current `Prompt.submit` hook works, but naming could be revisited upstream."
+      },
+      {
+        "id": "allow-submit-when-busy",
+        "status": "needs-review",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Current boolean works, but a richer busy strategy may scale better upstream."
+      },
+      {
+        "id": "session-notice-slot",
+        "status": "generic-ok",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Generic visual insertion point for inspection/banners."
+      },
+      {
+        "id": "session-adapter",
+        "status": "generic-ok",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Main projection policy hook for the native session view."
+      },
+      {
+        "id": "session-list-adapter",
+        "status": "generic-ok",
+        "requiredFor": ["plugin-only", "patched-source-checkout"],
+        "notes": "Keeps the native session switcher generic while the plugin owns logical selection semantics."
+      }
+    ],
+    "modes": {
+      "patched-source-checkout": {
+        "supportLevel": "alpha-source-checkout-only",
+        "requiresPatch": true,
+        "requiresCleanWorktree": true,
+        "supportedVersions": ["1.14.39"],
+        "supportedDetectionMethods": [
+          "source-checkout-explicit",
+          "source-checkout-cwd"
+        ],
+        "notes": "Current supported alpha mode: plugin + patch over a compatible source checkout."
+      },
+      "plugin-only": {
+        "supportLevel": "future-plugin-only",
+        "requiresPatch": false,
+        "requiresCleanWorktree": false,
+        "supportedVersions": [],
+        "supportedDetectionMethods": [
+          "source-checkout-explicit",
+          "source-checkout-cwd",
+          "curl-binary",
+          "binary-or-global"
+        ],
+        "notes": "Reserved for future official OpenCode builds that ship the required host hooks."
+      }
+    },
+    "unsupportedMethods": ["not-found", "unknown"]
   }
 }

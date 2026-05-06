@@ -5,6 +5,7 @@ import { inspectPlugin } from "../lib/plugin.mjs";
 import { inspectPatch } from "../lib/patch.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
+import { resolveCompatibleMode } from "../lib/compat.mjs";
 
 await runCli("status", async (options) => {
   const manifest = await loadManifest();
@@ -13,25 +14,26 @@ await runCli("status", async (options) => {
     compat: manifest.compat,
     opencodeRoot: options.opencodeRoot,
   });
+  const mode = resolveCompatibleMode(manifest, target);
+  const targetLabel = target.root || target.execPath || target.method;
   const plugin = await inspectPlugin(
     manifest.pluginSourcePath,
     manifest.installedPluginPath,
   );
-  const supportedVersion =
-    target.supported && target.version
-      ? manifest.compat.opencode.supportedVersions.includes(target.version)
-      : false;
-  const patchPath =
-    target.supported && supportedVersion
-      ? manifest.patchPathFor(target.version)
-      : undefined;
+  const supportedVersion = mode.supported;
+  const patchPath = mode.patchPath;
   const patch =
-    target.supported && patchPath
+    mode.patchRequired && target.root && patchPath
       ? await inspectPatch(target.root, patchPath)
-      : { state: "unsupported" };
-  const worktree = target.supported
-    ? inspectWorktree(target.root)
-    : { ok: false, clean: false, message: "target unsupported" };
+      : mode.id === "plugin-only" && mode.supported
+        ? { state: "not_required" }
+        : { state: "unsupported" };
+  const worktree =
+    mode.patchRequired && target.root
+      ? inspectWorktree(target.root)
+      : mode.supported
+        ? { ok: true, clean: true, message: "not_required" }
+        : { ok: false, clean: false, message: "target unsupported" };
 
   return {
     addon: {
@@ -41,22 +43,25 @@ await runCli("status", async (options) => {
     },
     target,
     compatibility: {
+      mode: mode.id,
       supportedVersion,
-      supportLevel: manifest.compat.opencode.supportLevel,
+      supportLevel: mode.supportLevel,
+      patchRequired: mode.patchRequired,
       patchPath,
     },
     plugin,
     patch,
     worktree,
     state,
-    message: target.supported
-      ? `Target soportado detectado en ${target.root}`
+    message: mode.supported
+      ? `Target compatible detectado en ${targetLabel}`
       : target.message,
     details: [
       `plugin: ${plugin.state}`,
       `patch: ${patch.state}`,
       `compat version: ${supportedVersion ? "ok" : "unsupported"}`,
-      `worktree: ${worktree.ok ? (worktree.clean ? "clean" : "dirty") : "n/a"}`,
+      `mode: ${mode.id}`,
+      `worktree: ${worktree.ok ? (worktree.message === "not_required" ? "not_required" : worktree.clean ? "clean" : "dirty") : "n/a"}`,
     ],
   };
 });

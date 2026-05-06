@@ -5,6 +5,7 @@ import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { removePlugin } from "../lib/plugin.mjs";
 import { revertPatch } from "../lib/patch.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
+import { ensureCompatibleMode } from "../lib/compat.mjs";
 
 await runCli("disable", async (options) => {
   const manifest = await loadManifest();
@@ -13,39 +14,43 @@ await runCli("disable", async (options) => {
     compat: manifest.compat,
     opencodeRoot: options.opencodeRoot || state?.opencode?.root,
   });
+  const mode = ensureCompatibleMode(manifest, target);
+  const targetLabel = target.root || target.execPath || target.method;
+  const patchPath = state?.patch?.path || mode.patchPath;
+  const worktree =
+    mode.patchRequired && target.root
+      ? inspectWorktree(target.root)
+      : { ok: true, clean: true, entries: [] };
 
-  if (!target.supported) {
-    fail({ message: target.message }, 2);
+  if (mode.patchRequired) {
+    if (!patchPath) {
+      fail(
+        {
+          message: `No existe patch para deshabilitar OpenCode ${target.version}`,
+        },
+        2,
+      );
+    }
+    if (!worktree.ok) {
+      fail({ message: worktree.message }, 2);
+    }
+    if (!options.dryRun && mode.requiresCleanWorktree && !worktree.clean) {
+      fail(
+        {
+          message:
+            "El checkout de OpenCode no está limpio; no es seguro deshabilitar el addon automáticamente.",
+          details: worktree.entries.slice(0, 10),
+        },
+        3,
+      );
+    }
   }
 
-  const patchPath = state?.patch?.path || manifest.patchPathFor(target.version);
-  if (!patchPath) {
-    fail(
-      {
-        message: `No existe patch para deshabilitar OpenCode ${target.version}`,
-      },
-      2,
-    );
-  }
-
-  const worktree = inspectWorktree(target.root);
-  if (!worktree.ok) {
-    fail({ message: worktree.message }, 2);
-  }
-  if (!options.dryRun && !worktree.clean) {
-    fail(
-      {
-        message:
-          "El checkout de OpenCode no está limpio; no es seguro deshabilitar el addon automáticamente.",
-        details: worktree.entries.slice(0, 10),
-      },
-      3,
-    );
-  }
-
-  const patchResult = await revertPatch(target.root, patchPath, {
-    dryRun: options.dryRun,
-  });
+  const patchResult = mode.patchRequired
+    ? await revertPatch(target.root, patchPath, {
+        dryRun: options.dryRun,
+      })
+    : { changed: false, state: "not_required" };
   const pluginResult = await removePlugin(
     manifest.pluginSourcePath,
     manifest.installedPluginPath,
@@ -61,12 +66,13 @@ await runCli("disable", async (options) => {
 
   return {
     message: options.dryRun
-      ? `Dry run OK para deshabilitar sobre ${target.root}`
-      : `Addon deshabilitado sobre ${target.root}`,
+      ? `Dry run OK para deshabilitar sobre ${targetLabel}`
+      : `Addon deshabilitado sobre ${targetLabel}`,
     details: [
+      `mode: ${mode.id}`,
       `patch: ${patchResult.state}`,
       `plugin: ${pluginResult.state}`,
-      `worktree: ${worktree.clean ? "clean" : "dirty (dry-run allowed)"}`,
+      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : "dirty (dry-run allowed)") : "not_required"}`,
       pluginResult.state === "modified"
         ? "el plugin instalado fue modificado manualmente y no se eliminó"
         : "plugin revertido de forma segura",

@@ -26,6 +26,21 @@ Este addon empaqueta el trabajo de background tasks same-session que hoy permite
 
 En esta alpha, el addon no “instala magia”: administra de forma explícita un **plugin** y un **patch versionado del host/core**.
 
+## Modelo de modos
+
+El lifecycle está preparado para distinguir entre tres modos:
+
+- `patched-source-checkout`
+  - modo soportado hoy
+  - usa plugin + patch sobre un checkout fuente compatible
+- `plugin-only`
+  - modo objetivo futuro
+  - pensado para versiones oficiales de OpenCode que ya incorporen los hooks host necesarios
+- `unsupported`
+  - el addon detecta el target, pero no puede operarlo de forma segura con este alpha
+
+En esta versión, el único modo realmente soportado es `patched-source-checkout`.
+
 ## Alcance de esta alpha
 
 ### Soportado
@@ -121,6 +136,7 @@ node ./scripts/smoke.mjs --opencode-root /ruta/al/opencode-checkout
 ## Garantías de seguridad del MVP
 
 - `enable` y `reapply` validan compatibilidad exacta por versión.
+- el lifecycle deja explícito el modo compatible detectado (`patched-source-checkout`, `plugin-only`, `unsupported`).
 - los comandos reales no operan sobre checkouts sucios.
 - `disable` no borra el plugin si detecta modificaciones manuales.
 - si el patch no está en un estado seguro para aplicar/revertir, el lifecycle falla.
@@ -149,6 +165,7 @@ Este proyecto se distribuye bajo **GNU GPL v3**. Ver `LICENSE`.
 
 - `docs/validation.md`
 - `docs/alpha-publication-notes.md`
+- `docs/upstream-readiness.md`
 
 ## Cómo presentar honestamente esta alpha
 
