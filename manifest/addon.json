@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "opencode-background-tasks",
+  "name": "OpenCode Background Tasks",
+  "version": "0.1.0-alpha.1",
+  "channel": "alpha",
+  "repositoryReady": true,
+  "plugin": {
+    "id": "background-agents-tui",
+    "source": "plugin/background-agents-tui/index.ts",
+    "installDirName": "background-agents-tui",
+    "installFile": "index.ts"
+  },
+  "patches": {
+    "opencode": {
+      "1.14.39": "patches/opencode/1.14.39.patch"
+    }
+  },
+  "state": {
+    "schemaVersion": 1,
+    "relativeStateDir": "opencode-addons/opencode-background-tasks"
+  }
+}

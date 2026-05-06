@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "opencode": {
+    "supportedVersions": ["1.14.39"],
+    "supportLevel": "alpha-source-checkout-only",
+    "supportedDetectionMethods": [
+      "source-checkout-explicit",
+      "source-checkout-cwd"
+    ],
+    "unsupportedMethods": [
+      "curl-binary",
+      "binary-or-global",
+      "not-found",
+      "unknown"
+    ],
+    "requiredMarkers": [
+      "packages/opencode/package.json",
+      "packages/plugin/src/tui.ts",
+      "packages/opencode/src/cli/cmd/tui/routes/session/index.tsx"
+    ]
+  }
+}

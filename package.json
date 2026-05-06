@@ -1,0 +1,15 @@
+{
+  "name": "opencode-background-tasks-addon",
+  "description": "Alpha scaffold for the OpenCode background tasks addon",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0-alpha.1",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "status": "node ./scripts/status.mjs",
+    "enable": "node ./scripts/enable.mjs",
+    "disable": "node ./scripts/disable.mjs",
+    "reapply": "node ./scripts/reapply.mjs",
+    "smoke": "node ./scripts/smoke.mjs"
+  }
+}

@@ -1,0 +1,1292 @@
+diff --git a/packages/opencode/src/cli/cmd/tui/component/dialog-command.tsx b/packages/opencode/src/cli/cmd/tui/component/dialog-command.tsx
+index 49bf42c..a58e3df 100644
+--- a/packages/opencode/src/cli/cmd/tui/component/dialog-command.tsx
++++ b/packages/opencode/src/cli/cmd/tui/component/dialog-command.tsx
+@@ -63,9 +63,9 @@ function init() {
+   useKeyboard((evt) => {
+     if (suspended()) return
+     if (dialog.stack.length > 0) return
+-    if (evt.defaultPrevented) return
+     for (const option of entries()) {
+       if (!isEnabled(option)) continue
++       if (evt.defaultPrevented && (!option.keybind || keybind.sequenceLength(option.keybind) <= 1)) continue
+       if (option.keybind && keybind.match(option.keybind, evt)) {
+         evt.preventDefault()
+         option.onSelect?.(dialog)
+diff --git a/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx b/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
+index 09d952e..7f19342 100644
+--- a/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
++++ b/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
+@@ -2,7 +2,7 @@ import { useDialog } from "@tui/ui/dialog"
+ import { DialogSelect } from "@tui/ui/dialog-select"
+ import { useRoute } from "@tui/context/route"
+ import { useSync } from "@tui/context/sync"
+-import { createMemo, createResource, createSignal, onMount, type JSX } from "solid-js"
++import { createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+ import { Locale } from "@/util/locale"
+ import { useProject } from "@tui/context/project"
+ import { useKeybind } from "../context/keybind"
+@@ -17,6 +17,8 @@ import { Spinner } from "./spinner"
+ import { errorMessage } from "@/util/error"
+ import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
+ import { WorkspaceLabel } from "./workspace-label"
++import { useKV } from "../context/kv"
++import { resolveSessionListProjection, subscribeSessionListAdapters } from "../plugin/api"
+ 
+ export function DialogSessionList() {
+   const dialog = useDialog()
+@@ -27,8 +29,10 @@ export function DialogSessionList() {
+   const { theme } = useTheme()
+   const sdk = useSDK()
+   const toast = useToast()
++  const kv = useKV()
+   const [toDelete, setToDelete] = createSignal<string>()
+   const [search, setSearch] = createDebouncedSignal("", 150)
++  const [sessionListAdapterRevision, setSessionListAdapterRevision] = createSignal(0)
+ 
+   const [searchResults, { refetch }] = createResource(
+     () => ({ query: search(), filter: sync.session.query() }),
+@@ -39,8 +43,25 @@ export function DialogSessionList() {
+     },
+   )
+ 
+-  const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
+   const sessions = createMemo(() => searchResults() ?? sync.data.session)
++  const listProjection = createMemo(() => {
++    sessionListAdapterRevision()
++    return resolveSessionListProjection({
++      routeCurrent:
++        route.data.type === "home"
++          ? { name: "home" }
++          : route.data.type === "session"
++            ? { name: "session", params: { sessionID: route.data.sessionID, prompt: route.data.prompt } }
++            : { name: route.data.id, params: route.data.data },
++      sessions: sync.data.session,
++      kv,
++    })
++  })
++  const currentSessionID = createMemo(() => {
++    const projected = listProjection()?.currentSessionID
++    if (projected) return projected
++    return route.data.type === "session" ? route.data.sessionID : undefined
++  })
+ 
+   function recover(session: NonNullable<ReturnType<typeof sessions>[number]>) {
+     const workspace = project.workspace.get(session.workspaceID!)
+@@ -165,6 +186,8 @@ export function DialogSessionList() {
+   })
+ 
+   onMount(() => {
++    const unsubscribe = subscribeSessionListAdapters(() => setSessionListAdapterRevision((value) => value + 1))
++    onCleanup(unsubscribe)
+     dialog.setSize("large")
+   })
+ 
+@@ -179,9 +202,11 @@ export function DialogSessionList() {
+         setToDelete(undefined)
+       }}
+       onSelect={(option) => {
++        listProjection()?.beforeNavigate?.(option.value)
++        const sessionID = listProjection()?.navigateToSessionID?.(option.value) ?? option.value
+         route.navigate({
+           type: "session",
+-          sessionID: option.value,
++          sessionID,
+         })
+         dialog.clear()
+       }}
+diff --git a/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx b/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
+index 74332c7..6bb3910 100644
+--- a/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
++++ b/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
+@@ -53,6 +53,20 @@ export type PromptProps = {
+   workspaceID?: string
+   visible?: boolean
+   disabled?: boolean
++  allowSubmitWhenBusy?: boolean
++  submit?: (input: {
++    sessionID?: string
++    messageID: string
++    input: string
++    mode?: "normal" | "shell"
++    parts: PromptInfo["parts"]
++    agent: string
++    model: {
++      providerID: string
++      modelID: string
++      variant?: string
++    }
++  }) => Promise<boolean | void> | boolean | void
+   onSubmit?: () => void
+   ref?: (ref: PromptRef | undefined) => void
+   hint?: JSX.Element
+@@ -127,18 +141,28 @@ export function Prompt(props: PromptProps) {
+   const sdk = useSDK()
+   const editor = useEditorContext()
+   const route = useRoute()
++  const kv = useKV()
+   const project = useProject()
+   const sync = useSync()
+   const dialog = useDialog()
+   const toast = useToast()
+-  const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
++  const activeSessionID = createMemo(() => {
++    if (props.sessionID) return props.sessionID
++    return route.data.type === "session" ? route.data.sessionID : undefined
++  })
++  const status = createMemo(() => {
++    const current = sync.data.session_status?.[activeSessionID() ?? ""] ?? { type: "idle" }
++    if (props.allowSubmitWhenBusy && current.type !== "idle") {
++      return { type: "idle" as const }
++    }
++    return current
++  })
+   const history = usePromptHistory()
+   const stash = usePromptStash()
+   const command = useCommandDialog()
+   const renderer = useRenderer()
+   const dimensions = useTerminalDimensions()
+   const { theme, syntax } = useTheme()
+-  const kv = useKV()
+   const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
+   const list = createMemo(() => props.placeholders?.normal ?? [])
+   const shell = createMemo(() => props.placeholders?.shell ?? [])
+@@ -450,7 +474,8 @@ export function Prompt(props: PromptProps) {
+             setStore("mode", "normal")
+             return
+           }
+-          if (!props.sessionID) return
++          const sessionID = activeSessionID()
++          if (!sessionID) return
+ 
+           setStore("interrupt", store.interrupt + 1)
+ 
+@@ -460,7 +485,7 @@ export function Prompt(props: PromptProps) {
+ 
+           if (store.interrupt >= 2) {
+             void sdk.client.session.abort({
+-              sessionID: props.sessionID,
++              sessionID,
+             })
+             setStore("interrupt", 0)
+           }
+@@ -833,10 +858,11 @@ export function Prompt(props: PromptProps) {
+       return false
+     }
+ 
+-    const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
++    const currentSessionID = activeSessionID()
++    const workspaceSession = currentSessionID ? sync.session.get(currentSessionID) : undefined
+     const workspaceID = workspaceSession?.workspaceID
+     const workspaceStatus = workspaceID ? (project.workspace.status(workspaceID) ?? "error") : undefined
+-    if (props.sessionID && workspaceID && workspaceStatus !== "connected") {
++    if (currentSessionID && workspaceID && workspaceStatus !== "connected") {
+       dialog.replace(() => (
+         <DialogWorkspaceUnavailable
+           onRestore={() => {
+@@ -857,7 +883,7 @@ export function Prompt(props: PromptProps) {
+     }
+ 
+     const variant = local.model.variant.current()
+-    let sessionID = props.sessionID
++    let sessionID = currentSessionID
+     if (sessionID == null) {
+       const workspace = workspaceSelection()
+       const workspaceID = iife(() => {
+@@ -977,25 +1003,42 @@ export function Prompt(props: PromptProps) {
+           })),
+       })
+     } else {
+-      sdk.client.session
+-        .prompt({
+-          sessionID,
+-          ...selectedModel,
+-          messageID,
+-          agent: agent.name,
+-          model: selectedModel,
++      const promptParts = [
++        ...editorParts,
++        {
++          id: PartID.ascending(),
++          type: "text" as const,
++          text: inputText,
++        },
++        ...nonTextParts.map(assign),
++      ]
++      const handled = await props.submit?.({
++        sessionID,
++        messageID,
++        input: inputText,
++        mode: currentMode,
++        parts: promptParts,
++        agent: agent.name,
++        model: {
++          providerID: selectedModel.providerID,
++          modelID: selectedModel.modelID,
+           variant,
+-          parts: [
+-            ...editorParts,
+-            {
+-              id: PartID.ascending(),
+-              type: "text",
+-              text: inputText,
+-            },
+-            ...nonTextParts.map(assign),
+-          ],
+-        })
+-        .catch(() => {})
++        },
++      })
++
++      if (!handled) {
++        sdk.client.session
++          .prompt({
++            sessionID,
++            ...selectedModel,
++            messageID,
++            agent: agent.name,
++            model: selectedModel,
++            variant,
++            parts: promptParts,
++          })
++          .catch(() => {})
++      }
+       lastSubmittedEditorSelectionKey = currentEditorSelectionKey
+     }
+     history.append({
+@@ -1011,7 +1054,7 @@ export function Prompt(props: PromptProps) {
+     props.onSubmit?.()
+ 
+     // temporary hack to make sure the message is sent
+-    if (!props.sessionID)
++    if (!currentSessionID)
+       setTimeout(() => {
+         route.navigate({
+           type: "session",
+diff --git a/packages/opencode/src/cli/cmd/tui/context/keybind.tsx b/packages/opencode/src/cli/cmd/tui/context/keybind.tsx
+index 2c1ab24..7adc16e 100644
+--- a/packages/opencode/src/cli/cmd/tui/context/keybind.tsx
++++ b/packages/opencode/src/cli/cmd/tui/context/keybind.tsx
+@@ -13,6 +13,7 @@ export type KeybindKey = keyof NonNullable<TuiConfig.Info["keybinds"]> & string
+ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContext({
+   name: "Keybind",
+   init: () => {
++    const SEQUENCE_TIMEOUT_MS = 900
+     const config = useTuiConfig()
+     const keybinds = createMemo<Record<string, Keybind.Info[]>>(() => {
+       return pipe(
+@@ -24,6 +25,7 @@ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContex
+       leader: false,
+     })
+     const renderer = useRenderer()
++    let recent: { info: Keybind.Info; at: number }[] = []
+ 
+     let focus: Renderable | null
+     let timeout: NodeJS.Timeout
+@@ -50,12 +52,22 @@ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContex
+       }
+     }
+ 
++    function record(evt: ParsedKey) {
++      const now = Date.now()
++      recent = recent.filter((entry) => now - entry.at <= SEQUENCE_TIMEOUT_MS)
++      recent.push({ info: result.parse(evt), at: now })
++      const maxHistory = 6
++      if (recent.length > maxHistory) recent = recent.slice(-maxHistory)
++    }
++
+     useKeyboard(async (evt) => {
+       if (!store.leader && result.match("leader", evt)) {
+         leader(true)
+         return
+       }
+ 
++      if (evt.name) record(evt)
++
+       if (store.leader && evt.name) {
+         setImmediate(() => {
+           if (focus && renderer.currentFocusedRenderable === focus) {
+@@ -80,21 +92,46 @@ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContex
+         }
+         return Keybind.fromParsedKey(evt, store.leader)
+       },
++      sequences(key: string) {
++        return Keybind.parseSequences(key)
++      },
++      sequenceLength(key: string) {
++        return Math.max(0, ...Keybind.parseSequences(key).map((sequence) => sequence.length))
++      },
+       match(key: string, evt: ParsedKey) {
+-        const list = keybinds()[key] ?? Keybind.parse(key)
+-        if (!list.length) return false
+-        const parsed: Keybind.Info = result.parse(evt)
+-        for (const item of list) {
+-          if (Keybind.match(item, parsed)) {
++        const parsed: Keybind.Info = recent.at(-1)?.info ?? result.parse(evt)
++
++        const sequences = keybinds()[key] ? (keybinds()[key] ?? []).map((item) => [item]) : Keybind.parseSequences(key)
++        if (!sequences.length) return false
++        for (const sequence of sequences) {
++          if (sequence.length === 1) {
++            if (Keybind.match(sequence[0], parsed)) {
++              return true
++            }
++            continue
++          }
++
++          if (sequence.length > recent.length) continue
++          const tail = recent.slice(-sequence.length)
++          const matched = sequence.every((item, index) => Keybind.match(item, tail[index]?.info))
++          if (matched) {
++            recent = []
+             return true
+           }
+         }
+         return false
+       },
+       print(key: string) {
+-        const first = keybinds()[key]?.at(0) ?? Keybind.parse(key).at(0)
+-        if (!first) return ""
+-        const text = Keybind.toString(first)
++        const explicit = keybinds()[key]
++        const text = explicit?.at(0)
++          ? Keybind.toString(explicit[0])
++          : (() => {
++              const sequence = Keybind.parseSequences(key).at(0)
++              if (!sequence || sequence.length === 0) return ""
++              if (sequence.length === 1) return Keybind.toString(sequence[0])
++              return Keybind.sequenceToString(sequence)
++            })()
++        if (!text) return ""
+         const lead = keybinds().leader?.[0]
+         if (!lead) return text
+         return text.replace("<leader>", Keybind.toString(lead))
+diff --git a/packages/opencode/src/cli/cmd/tui/plugin/api.tsx b/packages/opencode/src/cli/cmd/tui/plugin/api.tsx
+index 25ea3ac..84cef8b 100644
+--- a/packages/opencode/src/cli/cmd/tui/plugin/api.tsx
++++ b/packages/opencode/src/cli/cmd/tui/plugin/api.tsx
+@@ -1,5 +1,16 @@
+ import type { ParsedKey } from "@opentui/core"
+-import type { TuiDialogSelectOption, TuiPluginApi, TuiRouteDefinition, TuiSlotProps } from "@opencode-ai/plugin/tui"
++import type {
++  TuiDialogSelectOption,
++  TuiPluginApi,
++  TuiRouteDefinition,
++  TuiSessionAdapter,
++  TuiSessionAdapterContext,
++  TuiSessionListAdapter,
++  TuiSessionListAdapterContext,
++  TuiSessionListProjection,
++  TuiSessionProjection,
++  TuiSlotProps,
++} from "@opencode-ai/plugin/tui"
+ import type { useCommandDialog } from "@tui/component/dialog-command"
+ import type { useEvent } from "@tui/context/event"
+ import type { useKeybind } from "@tui/context/keybind"
+@@ -27,6 +38,105 @@ type RouteEntry = {
+ 
+ export type RouteMap = Map<string, RouteEntry[]>
+ 
++type SessionAdapterEntry = {
++  key: symbol
++  order: number
++  adapter: TuiSessionAdapter
++}
++
++type SessionListAdapterEntry = {
++  key: symbol
++  order: number
++  adapter: TuiSessionListAdapter
++}
++
++const sessionAdapters: SessionAdapterEntry[] = []
++const sessionAdapterListeners = new Set<() => void>()
++let sessionAdapterOrder = 0
++const sessionListAdapters: SessionListAdapterEntry[] = []
++const sessionListAdapterListeners = new Set<() => void>()
++let sessionListAdapterOrder = 0
++
++function sessionAdapterNotify() {
++  for (const listener of sessionAdapterListeners) listener()
++}
++
++function sessionListAdapterNotify() {
++  for (const listener of sessionListAdapterListeners) listener()
++}
++
++function sessionAdapterRegister(adapter: TuiSessionAdapter) {
++  const key = Symbol()
++  sessionAdapters.push({ key, order: sessionAdapterOrder++, adapter })
++  sessionAdapterNotify()
++
++  return () => {
++    const index = sessionAdapters.findIndex((entry) => entry.key === key)
++    if (index === -1) return
++    sessionAdapters.splice(index, 1)
++    sessionAdapterNotify()
++  }
++}
++
++function sessionListAdapterRegister(adapter: TuiSessionListAdapter) {
++  const key = Symbol()
++  sessionListAdapters.push({ key, order: sessionListAdapterOrder++, adapter })
++  sessionListAdapterNotify()
++
++  return () => {
++    const index = sessionListAdapters.findIndex((entry) => entry.key === key)
++    if (index === -1) return
++    sessionListAdapters.splice(index, 1)
++    sessionListAdapterNotify()
++  }
++}
++
++function currentSessionAdapter(): TuiSessionAdapter | undefined {
++  return sessionAdapters.reduce<SessionAdapterEntry | undefined>((best, entry) => {
++    if (!best) return entry
++    const entryPriority = entry.adapter.priority ?? 0
++    const bestPriority = best.adapter.priority ?? 0
++    if (entryPriority > bestPriority) return entry
++    if (entryPriority < bestPriority) return best
++    return entry.order > best.order ? entry : best
++  }, undefined)?.adapter
++}
++
++function currentSessionListAdapter(): TuiSessionListAdapter | undefined {
++  return sessionListAdapters.reduce<SessionListAdapterEntry | undefined>((best, entry) => {
++    if (!best) return entry
++    const entryPriority = entry.adapter.priority ?? 0
++    const bestPriority = best.adapter.priority ?? 0
++    if (entryPriority > bestPriority) return entry
++    if (entryPriority < bestPriority) return best
++    return entry.order > best.order ? entry : best
++  }, undefined)?.adapter
++}
++
++export function resolveSessionProjection(input: TuiSessionAdapterContext): TuiSessionProjection | undefined {
++  return currentSessionAdapter()?.resolve(input)
++}
++
++export function resolveSessionListProjection(
++  input: TuiSessionListAdapterContext,
++): TuiSessionListProjection | undefined {
++  return currentSessionListAdapter()?.resolve(input)
++}
++
++export function subscribeSessionAdapters(listener: () => void) {
++  sessionAdapterListeners.add(listener)
++  return () => {
++    sessionAdapterListeners.delete(listener)
++  }
++}
++
++export function subscribeSessionListAdapters(listener: () => void) {
++  sessionListAdapterListeners.add(listener)
++  return () => {
++    sessionListAdapterListeners.delete(listener)
++  }
++}
++
+ type Input = {
+   command: ReturnType<typeof useCommandDialog>
+   tuiConfig: TuiConfig.Info
+@@ -226,6 +336,14 @@ export function createTuiApi(input: Input): TuiPluginApi {
+         return routeCurrent(input.route)
+       },
+     },
++    session: {
++      registerAdapter(adapter) {
++        return sessionAdapterRegister(adapter)
++      },
++      registerListAdapter(adapter) {
++        return sessionListAdapterRegister(adapter)
++      },
++    },
+     ui: {
+       Dialog(props) {
+         return (
+@@ -268,6 +386,8 @@ export function createTuiApi(input: Input): TuiPluginApi {
+             workspaceID={props.workspaceID}
+             visible={props.visible}
+             disabled={props.disabled}
++            allowSubmitWhenBusy={props.allowSubmitWhenBusy}
++            submit={props.submit}
+             onSubmit={props.onSubmit}
+             ref={props.ref}
+             hint={props.hint}
+diff --git a/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts b/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts
+index 73193d1..92c860f 100644
+--- a/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts
++++ b/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts
+@@ -533,6 +533,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
+     app: api.app,
+     command,
+     route,
++    session: api.session,
+     ui: api.ui,
+     keybind: api.keybind,
+     tuiConfig: api.tuiConfig,
+diff --git a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+index d43edd2..1e304ac 100644
+--- a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
++++ b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+@@ -6,6 +6,7 @@ import {
+   createSignal,
+   For,
+   Match,
++  onCleanup,
+   on,
+   onMount,
+   Show,
+@@ -87,6 +88,7 @@ import { UI } from "@/cli/ui.ts"
+ import { useTuiConfig } from "../../context/tui-config"
+ import { getScrollAcceleration } from "../../util/scroll"
+ import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
++import { resolveSessionProjection, subscribeSessionAdapters } from "../../plugin/api"
+ import { DialogGoUpsell } from "../../component/dialog-go-upsell"
+ import { SessionRetry } from "@/session/retry"
+ import { getRevertDiffFiles } from "../../util/revert-diff"
+@@ -127,23 +129,89 @@ export function Session() {
+   const kv = useKV()
+   const { theme } = useTheme()
+   const promptRef = usePromptRef()
+-  const session = createMemo(() => sync.session.get(route.sessionID))
++  const shellSessionID = createMemo(() => route.sessionID)
++  const session = createMemo(() => sync.session.get(shellSessionID()))
+   const children = createMemo(() => {
+     const parentID = session()?.parentID ?? session()?.id
+     return sync.data.session
+       .filter((x) => x.parentID === parentID || x.id === parentID)
+       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+   })
+-  const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+-  const permissions = createMemo(() => {
++  const [sessionAdapterRevision, setSessionAdapterRevision] = createSignal(0)
++  onMount(() => {
++    const unsubscribe = subscribeSessionAdapters(() => setSessionAdapterRevision((value) => value + 1))
++    onCleanup(unsubscribe)
++  })
++  const defaultPermissions = createMemo(() => {
+     if (session()?.parentID) return []
+-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
++    return children().flatMap((item) => sync.data.permission[item.id] ?? [])
+   })
+-  const questions = createMemo(() => {
++  const defaultQuestions = createMemo(() => {
+     if (session()?.parentID) return []
+-    return children().flatMap((x) => sync.data.question[x.id] ?? [])
++    return children().flatMap((item) => sync.data.question[item.id] ?? [])
++  })
++  const sessionProjection = createMemo(() => {
++    sessionAdapterRevision()
++    const routeSessionID = shellSessionID()
++    const routeSession = session()
++    const defaultProjection = {
++      canonicalSessionID: routeSessionID,
++      activeSessionID: routeSessionID,
++      visibleMessages: sync.data.message[routeSessionID] ?? [],
++      promptTargetSessionID: routeSessionID,
++      promptVisible: !routeSession?.parentID,
++      allowSubmitWhenBusy: false,
++      permissionSessionID: undefined,
++      questionSessionID: undefined,
++      inspection: { active: false },
++    }
++    const projection = resolveSessionProjection({
++      routeSessionID,
++      routeSession: routeSession
++        ? {
++            id: routeSession.id,
++            parentID: routeSession.parentID,
++            title: routeSession.title,
++            time: routeSession.time,
++          }
++        : undefined,
++      sessions: sync.data.session,
++      messagesBySession: sync.data.message,
++      permissionsBySession: sync.data.permission,
++      questionsBySession: sync.data.question,
++      kv,
++    })
++    return {
++      canonicalSessionID: projection?.canonicalSessionID ?? defaultProjection.canonicalSessionID,
++      activeSessionID: projection?.activeSessionID ?? defaultProjection.activeSessionID,
++      visibleMessages: projection?.visibleMessages ?? defaultProjection.visibleMessages,
++      promptTargetSessionID: projection?.promptTargetSessionID ?? defaultProjection.promptTargetSessionID,
++      promptVisible: projection?.promptVisible ?? defaultProjection.promptVisible,
++      allowSubmitWhenBusy: projection?.allowSubmitWhenBusy ?? defaultProjection.allowSubmitWhenBusy,
++      permissionSessionID: projection?.permissionSessionID,
++      questionSessionID: projection?.questionSessionID,
++      inspection: projection?.inspection ?? defaultProjection.inspection,
++    }
+   })
+-  const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
++  const activeSessionID = createMemo(() => sessionProjection().activeSessionID)
++  const promptTargetSessionID = createMemo(() => sessionProjection().promptTargetSessionID ?? activeSessionID())
++  const activeSession = createMemo(() => sync.session.get(activeSessionID()))
++  const activeSessionMessages = createMemo(() => sync.data.message[activeSessionID()] ?? [])
++  const messages = createMemo(() => sessionProjection().visibleMessages)
++  const permissions = createMemo(() => {
++    const sessionID = sessionProjection().permissionSessionID
++    if (!sessionID) return defaultPermissions()
++    return sync.data.permission[sessionID] ?? []
++  })
++  const questions = createMemo(() => {
++    const sessionID = sessionProjection().questionSessionID
++    if (!sessionID) return defaultQuestions()
++    return sync.data.question[sessionID] ?? []
++  })
++  const inspectionActive = createMemo(() => sessionProjection().inspection?.active === true)
++  const promptVisible = createMemo(
++    () => sessionProjection().promptVisible && permissions().length === 0 && questions().length === 0,
++  )
+   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
+ 
+   const pending = createMemo(() => {
+@@ -223,11 +291,18 @@ export function Session() {
+     })
+   })
+ 
++  createEffect(() => {
++    const sessionID = activeSessionID()
++    if (!sessionID || sessionID === route.sessionID) return
++    if (sync.data.message[sessionID]?.length) return
++    void sync.session.sync(sessionID).catch(() => undefined)
++  })
++
+   let lastSwitch: string | undefined = undefined
+   event.on("message.part.updated", (evt) => {
+     const part = evt.properties.part
+     if (part.type !== "tool") return
+-    if (part.sessionID !== route.sessionID) return
++    if (part.sessionID !== activeSessionID()) return
+     if (part.state.status !== "completed") return
+     if (part.id === lastSwitch) return
+ 
+@@ -255,7 +330,7 @@ export function Session() {
+   const renderer = useRenderer()
+ 
+   event.on("session.status", (evt) => {
+-    if (evt.properties.sessionID !== route.sessionID) return
++    if (evt.properties.sessionID !== activeSessionID()) return
+     if (evt.properties.status.type !== "retry") return
+     if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
+     if (dialog.stack.length > 0) return
+@@ -392,7 +467,7 @@ export function Session() {
+   const command = useCommandDialog()
+   command.register(() => [
+     {
+-      title: session()?.share?.url ? "Copy share link" : "Share session",
++      title: activeSession()?.share?.url ? "Copy share link" : "Share session",
+       value: "session.share",
+       suggested: route.type === "session",
+       keybind: "session_share",
+@@ -406,7 +481,7 @@ export function Session() {
+           Clipboard.copy(url)
+             .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
+             .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
+-        const url = session()?.share?.url
++        const url = activeSession()?.share?.url
+         if (url) {
+           await copy(url)
+           dialog.clear()
+@@ -419,7 +494,7 @@ export function Session() {
+         }
+         await sdk.client.session
+           .share({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+           })
+           .then((res) => copy(res.data!.share!.url))
+           .catch((error) => {
+@@ -440,7 +515,7 @@ export function Session() {
+         name: "rename",
+       },
+       onSelect: (dialog) => {
+-        dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
++        dialog.replace(() => <DialogSessionRename session={shellSessionID()} />)
+       },
+     },
+     {
+@@ -460,7 +535,7 @@ export function Session() {
+               })
+               if (child) scroll.scrollBy(child.y - scroll.y - 1)
+             }}
+-            sessionID={route.sessionID}
++            sessionID={activeSessionID()}
+             setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+           />
+         ))
+@@ -484,7 +559,7 @@ export function Session() {
+               })
+               if (child) scroll.scrollBy(child.y - scroll.y - 1)
+             }}
+-            sessionID={route.sessionID}
++            sessionID={activeSessionID()}
+           />
+         ))
+       },
+@@ -509,7 +584,7 @@ export function Session() {
+           return
+         }
+         void sdk.client.session.summarize({
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           modelID: selectedModel.modelID,
+           providerID: selectedModel.providerID,
+         })
+@@ -521,14 +596,14 @@ export function Session() {
+       value: "session.unshare",
+       keybind: "session_unshare",
+       category: "Session",
+-      enabled: !!session()?.share?.url,
++      enabled: !!activeSession()?.share?.url,
+       slash: {
+         name: "unshare",
+       },
+       onSelect: async (dialog) => {
+         await sdk.client.session
+           .unshare({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+           })
+           .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
+           .catch((error) => {
+@@ -549,14 +624,14 @@ export function Session() {
+         name: "undo",
+       },
+       onSelect: async (dialog) => {
+-        const status = sync.data.session_status?.[route.sessionID]
+-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+-        const revert = session()?.revert?.messageID
+-        const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
++        const status = sync.data.session_status?.[activeSessionID()]
++        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: activeSessionID() }).catch(() => {})
++        const revert = activeSession()?.revert?.messageID
++        const message = activeSessionMessages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
+         if (!message) return
+         void sdk.client.session
+           .revert({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+             messageID: message.id,
+           })
+           .then(() => {
+@@ -583,24 +658,24 @@ export function Session() {
+       value: "session.redo",
+       keybind: "messages_redo",
+       category: "Session",
+-      enabled: !!session()?.revert?.messageID,
++      enabled: !!activeSession()?.revert?.messageID,
+       slash: {
+         name: "redo",
+       },
+       onSelect: (dialog) => {
+         dialog.clear()
+-        const messageID = session()?.revert?.messageID
++        const messageID = activeSession()?.revert?.messageID
+         if (!messageID) return
+-        const message = messages().find((x) => x.role === "user" && x.id > messageID)
++        const message = activeSessionMessages().find((x) => x.role === "user" && x.id > messageID)
+         if (!message) {
+           void sdk.client.session.unrevert({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+           })
+           prompt?.set({ input: "", parts: [] })
+           return
+         }
+         void sdk.client.session.revert({
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           messageID: message.id,
+         })
+       },
+@@ -780,7 +855,7 @@ export function Session() {
+       category: "Session",
+       hidden: true,
+       onSelect: () => {
+-        const messages = sync.data.message[route.sessionID]
++        const messages = sync.data.message[activeSessionID()]
+         if (!messages || !messages.length) return
+ 
+         // Find the most recent user message with non-ignored, non-synthetic text parts
+@@ -827,8 +902,8 @@ export function Session() {
+       keybind: "messages_copy",
+       category: "Session",
+       onSelect: (dialog) => {
+-        const revertID = session()?.revert?.messageID
+-        const lastAssistantMessage = messages().findLast(
++        const revertID = activeSession()?.revert?.messageID
++        const lastAssistantMessage = activeSessionMessages().findLast(
+           (msg) => msg.role === "assistant" && (!revertID || msg.id < revertID),
+         )
+         if (!lastAssistantMessage) {
+@@ -873,9 +948,9 @@ export function Session() {
+       },
+       onSelect: async (dialog) => {
+         try {
+-          const sessionData = session()
++          const sessionData = activeSession()
+           if (!sessionData) return
+-          const sessionMessages = messages()
++          const sessionMessages = activeSessionMessages()
+           const transcript = formatTranscript(
+             sessionData,
+             sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+@@ -904,9 +979,9 @@ export function Session() {
+       },
+       onSelect: async (dialog) => {
+         try {
+-          const sessionData = session()
++          const sessionData = activeSession()
+           if (!sessionData) return
+-          const sessionMessages = messages()
++          const sessionMessages = activeSessionMessages()
+ 
+           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
+ 
+@@ -962,6 +1037,7 @@ export function Session() {
+       keybind: "session_child_first",
+       category: "Session",
+       hidden: true,
++      enabled: !inspectionActive(),
+       onSelect: (dialog) => {
+         moveFirstChild()
+         dialog.clear()
+@@ -973,7 +1049,7 @@ export function Session() {
+       keybind: "session_parent",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       onSelect: childSessionHandler((dialog) => {
+         const parentID = session()?.parentID
+         if (parentID) {
+@@ -991,7 +1067,7 @@ export function Session() {
+       keybind: "session_child_cycle",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       onSelect: childSessionHandler((dialog) => {
+         moveChild(1)
+         dialog.clear()
+@@ -1003,7 +1079,7 @@ export function Session() {
+       keybind: "session_child_cycle_reverse",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       onSelect: childSessionHandler((dialog) => {
+         moveChild(-1)
+         dialog.clear()
+@@ -1011,7 +1087,7 @@ export function Session() {
+     },
+   ])
+ 
+-  const revertInfo = createMemo(() => session()?.revert)
++  const revertInfo = createMemo(() => activeSession()?.revert)
+   const revertMessageID = createMemo(() => revertInfo()?.messageID)
+ 
+   const revertDiffFiles = createMemo(() => getRevertDiffFiles(revertInfo()?.diff ?? ""))
+@@ -1019,7 +1095,7 @@ export function Session() {
+   const revertRevertedMessages = createMemo(() => {
+     const messageID = revertMessageID()
+     if (!messageID) return []
+-    return messages().filter((x) => x.id >= messageID && x.role === "user")
++    return activeSessionMessages().filter((x) => x.id >= messageID && x.role === "user")
+   })
+ 
+   const revert = createMemo(() => {
+@@ -1035,7 +1111,7 @@ export function Session() {
+   })
+ 
+   // snap to bottom when session changes
+-  createEffect(on(() => route.sessionID, toBottom))
++  createEffect(on(() => `${route.sessionID}:${activeSessionID()}`, toBottom))
+ 
+   return (
+     <context.Provider
+@@ -1043,7 +1119,7 @@ export function Session() {
+         get width() {
+           return contentWidth()
+         },
+-        sessionID: route.sessionID,
++        sessionID: activeSessionID(),
+         conceal,
+         showThinking,
+         showTimestamps,
+@@ -1080,7 +1156,7 @@ export function Session() {
+               <For each={messages()}>
+                 {(message, index) => (
+                   <Switch>
+-                    <Match when={message.id === revert()?.messageID}>
++                    <Match when={message.sessionID === activeSessionID() && message.id === revert()?.messageID}>
+                       {(function () {
+                         const command = useCommandDialog()
+                         const [hover, setHover] = createSignal(false)
+@@ -1141,7 +1217,13 @@ export function Session() {
+                         )
+                       })()}
+                     </Match>
+-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
++                    <Match
++                      when={
++                        message.sessionID === activeSessionID() &&
++                        revert()?.messageID &&
++                        message.id >= revert()!.messageID
++                      }
++                    >
+                       <></>
+                     </Match>
+                     <Match when={message.role === "user"}>
+@@ -1152,7 +1234,7 @@ export function Session() {
+                           dialog.replace(() => (
+                             <DialogMessage
+                               messageID={message.id}
+-                              sessionID={route.sessionID}
++                              sessionID={message.sessionID}
+                               setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                             />
+                           ))
+@@ -1174,34 +1256,40 @@ export function Session() {
+               </For>
+             </scrollbox>
+             <box flexShrink={0}>
++              <TuiPluginRuntime.Slot
++                name="session_notice"
++                session_id={shellSessionID()}
++                active_session_id={activeSessionID()}
++              />
+               <Show when={permissions().length > 0}>
+                 <PermissionPrompt request={permissions()[0]} />
+               </Show>
+               <Show when={permissions().length === 0 && questions().length > 0}>
+                 <QuestionPrompt request={questions()[0]} />
+               </Show>
+-              <Show when={session()?.parentID}>
++              <Show when={session()?.parentID && !promptVisible() && !inspectionActive()}>
+                 <SubagentFooter />
+               </Show>
+-              <Show when={visible()}>
++              <Show when={promptVisible()}>
+                 <TuiPluginRuntime.Slot
+                   name="session_prompt"
+                   mode="replace"
+-                  session_id={route.sessionID}
+-                  visible={visible()}
++                  session_id={shellSessionID()}
++                  visible={promptVisible()}
+                   disabled={disabled()}
+                   on_submit={toBottom}
+                   ref={bind}
+                 >
+                   <Prompt
+-                    visible={visible()}
++                    visible={promptVisible()}
+                     ref={bind}
+                     disabled={disabled()}
++                    allowSubmitWhenBusy={sessionProjection().allowSubmitWhenBusy}
+                     onSubmit={() => {
+                       toBottom()
+                     }}
+-                    sessionID={route.sessionID}
+-                    right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
++                    sessionID={promptTargetSessionID()}
++                    right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={promptTargetSessionID()} />}
+                   />
+                 </TuiPluginRuntime.Slot>
+               </Show>
+@@ -1212,7 +1300,7 @@ export function Session() {
+         <Show when={sidebarVisible()}>
+           <Switch>
+             <Match when={wide()}>
+-              <Sidebar sessionID={route.sessionID} />
++              <Sidebar sessionID={shellSessionID()} />
+             </Match>
+             <Match when={!wide()}>
+               <box
+@@ -1224,7 +1312,7 @@ export function Session() {
+                 alignItems="flex-end"
+                 backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
+               >
+-                <Sidebar sessionID={route.sessionID} />
++                <Sidebar sessionID={shellSessionID()} />
+               </box>
+             </Match>
+           </Switch>
+diff --git a/packages/opencode/src/util/keybind.ts b/packages/opencode/src/util/keybind.ts
+index e3c9b2b..1399357 100644
+--- a/packages/opencode/src/util/keybind.ts
++++ b/packages/opencode/src/util/keybind.ts
+@@ -9,6 +9,8 @@ export type Info = Pick<ParsedKey, "name" | "ctrl" | "meta" | "shift" | "super">
+   leader: boolean // our custom field
+ }
+ 
++export type Sequence = Info[]
++
+ export function match(a: Info | undefined, b: Info): boolean {
+   if (!a) return false
+   const normalizedA = { ...a, super: a.super ?? false }
+@@ -53,51 +55,66 @@ export function toString(info: Info | undefined): string {
+   return result
+ }
+ 
++function parseCombo(combo: string): Info {
++  const normalized = combo.replace(/<leader>/g, "leader+")
++  const parts = normalized.toLowerCase().split("+")
++  const info: Info = {
++    ctrl: false,
++    meta: false,
++    shift: false,
++    leader: false,
++    name: "",
++  }
++
++  for (const part of parts) {
++    switch (part) {
++      case "ctrl":
++        info.ctrl = true
++        break
++      case "alt":
++      case "meta":
++      case "option":
++        info.meta = true
++        break
++      case "super":
++        info.super = true
++        break
++      case "shift":
++        info.shift = true
++        break
++      case "leader":
++        info.leader = true
++        break
++      case "esc":
++        info.name = "escape"
++        break
++      default:
++        info.name = part
++        break
++    }
++  }
++
++  return info
++}
++
+ export function parse(key: string): Info[] {
+   if (key === "none") return []
+ 
+-  return key.split(",").map((combo) => {
+-    // Handle <leader> syntax by replacing with leader+
+-    const normalized = combo.replace(/<leader>/g, "leader+")
+-    const parts = normalized.toLowerCase().split("+")
+-    const info: Info = {
+-      ctrl: false,
+-      meta: false,
+-      shift: false,
+-      leader: false,
+-      name: "",
+-    }
++  return key.split(",").map((combo) => parseCombo(combo))
++}
+ 
+-    for (const part of parts) {
+-      switch (part) {
+-        case "ctrl":
+-          info.ctrl = true
+-          break
+-        case "alt":
+-        case "meta":
+-        case "option":
+-          info.meta = true
+-          break
+-        case "super":
+-          info.super = true
+-          break
+-        case "shift":
+-          info.shift = true
+-          break
+-        case "leader":
+-          info.leader = true
+-          break
+-        case "esc":
+-          info.name = "escape"
+-          break
+-        default:
+-          info.name = part
+-          break
+-      }
+-    }
++export function parseSequences(key: string): Sequence[] {
++  if (key === "none") return []
++
++  return key
++    .split(",")
++    .map((alias) => alias.trim())
++    .filter(Boolean)
++    .map((alias) => alias.split(/\s+/).map((combo) => parseCombo(combo)))
++}
+ 
+-    return info
+-  })
++export function sequenceToString(sequence: Sequence): string {
++  return sequence.map((item) => toString(item)).join(" ")
+ }
+ 
+ export * as Keybind from "./keybind"
+diff --git a/packages/opencode/test/fixture/tui-plugin.ts b/packages/opencode/test/fixture/tui-plugin.ts
+index 2691322..e4722ba 100644
+--- a/packages/opencode/test/fixture/tui-plugin.ts
++++ b/packages/opencode/test/fixture/tui-plugin.ts
+@@ -216,6 +216,10 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
+         return { name: "home" }
+       },
+     },
++    session: {
++      registerAdapter: () => () => {},
++      registerListAdapter: () => () => {},
++    },
+     ui: {
+       Dialog: () => null,
+       DialogAlert: () => null,
+diff --git a/packages/opencode/test/keybind.test.ts b/packages/opencode/test/keybind.test.ts
+index 09df519..766926b 100644
+--- a/packages/opencode/test/keybind.test.ts
++++ b/packages/opencode/test/keybind.test.ts
+@@ -419,3 +419,23 @@ describe("Keybind.parse", () => {
+     ])
+   })
+ })
++
++describe("Keybind.parseSequences", () => {
++  test("should parse exact two-step sequence", () => {
++    const result = Keybind.parseSequences("ctrl+b ctrl+b")
++    expect(result).toEqual([
++      [
++        { ctrl: true, meta: false, shift: false, leader: false, name: "b" },
++        { ctrl: true, meta: false, shift: false, leader: false, name: "b" },
++      ],
++    ])
++  })
++
++  test("should preserve comma aliases as alternatives, not steps", () => {
++    const result = Keybind.parseSequences("ctrl+p,ctrl+x")
++    expect(result).toEqual([
++      [{ ctrl: true, meta: false, shift: false, leader: false, name: "p" }],
++      [{ ctrl: true, meta: false, shift: false, leader: false, name: "x" }],
++    ])
++  })
++})
+diff --git a/packages/plugin/src/tui.ts b/packages/plugin/src/tui.ts
+index 1c57a71..ad85ddf 100644
+--- a/packages/plugin/src/tui.ts
++++ b/packages/plugin/src/tui.ts
+@@ -11,6 +11,7 @@ import type {
+   Provider,
+   PermissionRequest,
+   QuestionRequest,
++  Session,
+   SessionStatus,
+   TextPart,
+   Config as SdkConfig,
+@@ -170,6 +171,20 @@ export type TuiPromptProps = {
+   workspaceID?: string
+   visible?: boolean
+   disabled?: boolean
++  allowSubmitWhenBusy?: boolean
++  submit?: (input: {
++    sessionID?: string
++    messageID: string
++    input: string
++    mode?: "normal" | "shell"
++    parts: TuiPromptInfo["parts"]
++    agent: string
++    model: {
++      providerID: string
++      modelID: string
++      variant?: string
++    }
++  }) => Promise<boolean | void> | boolean | void
+   onSubmit?: () => void
+   ref?: (ref: TuiPromptRef | undefined) => void
+   hint?: JSX.Element
+@@ -338,6 +353,10 @@ export type TuiHostSlotMap = {
+   session_prompt_right: {
+     session_id: string
+   }
++  session_notice: {
++    session_id: string
++    active_session_id: string
++  }
+   home_bottom: {}
+   home_footer: {}
+   sidebar_title: {
+@@ -446,6 +465,56 @@ export type TuiWorkspace = {
+   set: (workspaceID?: string) => void
+ }
+ 
++export type TuiSessionInfo = Pick<Session, "id" | "parentID" | "title" | "time">
++
++export type TuiSessionProjection = {
++  canonicalSessionID?: string
++  activeSessionID?: string
++  visibleMessages?: ReadonlyArray<Message>
++  promptTargetSessionID?: string
++  promptVisible?: boolean
++  allowSubmitWhenBusy?: boolean
++  permissionSessionID?: string
++  questionSessionID?: string
++  inspection?: {
++    active: boolean
++  }
++}
++
++export type TuiSessionAdapterContext = {
++  routeSessionID: string
++  routeSession?: TuiSessionInfo
++  sessions: ReadonlyArray<TuiSessionInfo>
++  messagesBySession: Readonly<Record<string, ReadonlyArray<Message>>>
++  permissionsBySession: Readonly<Record<string, ReadonlyArray<PermissionRequest>>>
++  questionsBySession: Readonly<Record<string, ReadonlyArray<QuestionRequest>>>
++  kv: TuiKV
++}
++
++export type TuiSessionAdapter = {
++  id: string
++  priority?: number
++  resolve: (context: TuiSessionAdapterContext) => TuiSessionProjection | undefined
++}
++
++export type TuiSessionListAdapterContext = {
++  routeCurrent: TuiRouteCurrent
++  sessions: ReadonlyArray<TuiSessionInfo>
++  kv: TuiKV
++}
++
++export type TuiSessionListProjection = {
++  currentSessionID?: string
++  navigateToSessionID?: (selectedSessionID: string) => string | undefined
++  beforeNavigate?: (selectedSessionID: string) => void
++}
++
++export type TuiSessionListAdapter = {
++  id: string
++  priority?: number
++  resolve: (context: TuiSessionListAdapterContext) => TuiSessionListProjection | undefined
++}
++
+ export type TuiPluginApi = {
+   app: TuiApp
+   command: {
+@@ -458,6 +527,10 @@ export type TuiPluginApi = {
+     navigate: (name: string, params?: Record<string, unknown>) => void
+     readonly current: TuiRouteCurrent
+   }
++  session: {
++    registerAdapter: (adapter: TuiSessionAdapter) => () => void
++    registerListAdapter: (adapter: TuiSessionListAdapter) => () => void
++  }
+   ui: {
+     Dialog: (props: TuiDialogProps) => JSX.Element
+     DialogAlert: (props: TuiDialogAlertProps) => JSX.Element
