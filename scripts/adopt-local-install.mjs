@@ -6,6 +6,7 @@ import { ensureCompatibleMode } from "../lib/compat.mjs";
 import {
   adoptManagedLocalInstall,
   detectBunPath,
+  ensureBuiltOpencodeBinary,
   inspectManagedLocalInstall,
   resolveBackupPath,
 } from "../lib/local-install.mjs";
@@ -75,6 +76,11 @@ await runCli("adopt-local-install", async (options) => {
   }
 
   const bunPath = detectBunPath(options.bunPath);
+  const runtimeBinary = await ensureBuiltOpencodeBinary({
+    checkoutRoot: sourceTarget.root,
+    bunPath,
+    dryRun: options.dryRun,
+  });
   const installRoot = localTarget.installRoot;
   if (!installRoot) {
     fail(
@@ -101,8 +107,7 @@ await runCli("adopt-local-install", async (options) => {
   const result = await adoptManagedLocalInstall({
     installRoot,
     backupPath,
-    checkoutRoot: sourceTarget.root,
-    bunPath,
+    runtimeBinaryPath: runtimeBinary.binaryPath,
     addonId: manifest.addon.id,
     dryRun: options.dryRun,
   });
@@ -121,6 +126,8 @@ await runCli("adopt-local-install", async (options) => {
       checkoutRoot: sourceTarget.root,
       checkoutVersion: sourceTarget.version,
       bunPath,
+      runtimeBinaryPath: runtimeBinary.binaryPath,
+      runtimeBinaryState: runtimeBinary.state,
       sourcePatchPath: sourceMode.patchPath,
     },
   };
@@ -139,6 +146,8 @@ await runCli("adopt-local-install", async (options) => {
       `backup: ${backupPath}`,
       `checkout: ${sourceTarget.root}`,
       `bun: ${bunPath}`,
+      `runtime binary: ${runtimeBinary.binaryPath}`,
+      `binary prep: ${runtimeBinary.state}`,
       `result: ${result.state}`,
     ],
   };
