@@ -361,6 +361,413 @@ index 2c1ab24..7adc16e 100644
          const lead = keybinds().leader?.[0]
          if (!lead) return text
          return text.replace("<leader>", Keybind.toString(lead))
+diff --git a/packages/opencode/src/cli/cmd/tui/feature-plugins/sidebar/background-tasks.tsx b/packages/opencode/src/cli/cmd/tui/feature-plugins/sidebar/background-tasks.tsx
+new file mode 100644
+index 0000000..edf418e
+--- /dev/null
++++ b/packages/opencode/src/cli/cmd/tui/feature-plugins/sidebar/background-tasks.tsx
+@@ -0,0 +1,401 @@
++import type { Message, Part } from "@opencode-ai/sdk/v2"
++import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
++import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
++
++const id = "internal:sidebar-background-tasks"
++const SESSION_STATE_PREFIX = "background-agents-tui"
++const POLL_INTERVAL_MS = 2500
++const VISIBLE_LIMIT = 5
++
++type SessionRunRef = {
++  id: string
++  source: "foreground-detach" | "prompt-async"
++  sequence?: number
++  title?: string
++  bgTaskToken?: string
++  inspectionHostSessionID?: string
++  parentUserMessageID?: string
++  assistantMessageID?: string
++  createdAt: number
++  detachedAt: number
++}
++
++type SessionBackgroundState = {
++  backgroundModeEnabled: boolean
++  trackedTaskRefs: SessionRunRef[]
++  threadRootSessionID?: string
++}
++
++type BackgroundThreadState = {
++  rootSessionID: string
++  foregroundSessionID: string
++  title?: string
++}
++
++type TaskRecord = {
++  id: string
++  sessionID: string
++  sequence?: number
++  title?: string
++  status: "queued" | "running" | "done" | "error" | "needs_input"
++  mode: "same-session"
++  parentUserMessageID?: string
++  assistantMessageID?: string
++  inspectionHostSessionID?: string
++  currentSession?: boolean
++}
++
++type Snapshot = {
++  title?: string
++  items: TaskRecord[]
++}
++
++type SessionMessageRecord = {
++  info: Message
++  parts: Part[]
++}
++
++function normalizePositiveInt(value: unknown): number | undefined {
++  const number = Number(value)
++  return Number.isInteger(number) && number > 0 ? number : undefined
++}
++
++function summarize(text: string | undefined, max = 120): string | undefined {
++  if (!text) return undefined
++  const normalized = text.replace(/\s+/g, " ").trim()
++  if (!normalized) return undefined
++  return normalized.length > max ? `${normalized.slice(0, max).trim()}...` : normalized
++}
++
++function normalizeDisplaySummary(text: string | undefined): string | undefined {
++  if (!text) return undefined
++  const normalized = text.replace(/^\s*quiero(?:\s+que|\s+una|\s+un)?\s+/i, "").trim()
++  return normalized || undefined
++}
++
++function displayTaskTitle(item: TaskRecord, icon: string): string {
++  const fallback = "Tarea en background"
++  const summary = summarize(normalizeDisplaySummary(item.title) || fallback, 25) || fallback
++  const sequence = normalizePositiveInt(item.sequence)
++  return sequence ? `${icon} #${sequence} — ${summary}` : `${icon} ${summary}`
++}
++
++function compareTaskOrder(a: TaskRecord, b: TaskRecord): number {
++  const aSequence = normalizePositiveInt(a.sequence)
++  const bSequence = normalizePositiveInt(b.sequence)
++  if (aSequence !== undefined && bSequence !== undefined && aSequence !== bSequence) return aSequence - bSequence
++  return a.id.localeCompare(b.id)
++}
++
++function getStatusPresentation(status: TaskRecord["status"]) {
++  switch (status) {
++    case "queued":
++      return { icon: "🟡", label: "encolada" }
++    case "running":
++      return { icon: "🔵", label: "corriendo" }
++    case "done":
++      return { icon: "🟢", label: "completada" }
++    case "needs_input":
++      return { icon: "🟠", label: "necesita input" }
++    case "error":
++    default:
++      return { icon: "🔴", label: "error" }
++  }
++}
++
++function buildSessionStateKey(sessionID: string): string {
++  return `${SESSION_STATE_PREFIX}:session:${sessionID}`
++}
++
++function buildThreadStateKey(rootSessionID: string): string {
++  return `${SESSION_STATE_PREFIX}:thread:${rootSessionID}`
++}
++
++function buildInspectionStateKey(): string {
++  return `${SESSION_STATE_PREFIX}:inspection`
++}
++
++function normalizeSessionBackgroundState(value: unknown): SessionBackgroundState {
++  const input = value && typeof value === "object" ? (value as Partial<SessionBackgroundState>) : {}
++  const refs = Array.isArray(input.trackedTaskRefs)
++    ? input.trackedTaskRefs
++        .filter((ref): ref is SessionRunRef => Boolean(ref && typeof ref === "object" && typeof (ref as SessionRunRef).id === "string"))
++        .map((ref) => ({
++          id: ref.id,
++          source: ref.source === "foreground-detach" ? "foreground-detach" : "prompt-async",
++          sequence: normalizePositiveInt(ref.sequence),
++          title: ref.title,
++          bgTaskToken: ref.bgTaskToken,
++          inspectionHostSessionID: ref.inspectionHostSessionID,
++          parentUserMessageID: ref.parentUserMessageID,
++          assistantMessageID: ref.assistantMessageID,
++          createdAt: Number(ref.createdAt || Date.now()),
++          detachedAt: Number(ref.detachedAt || ref.createdAt || Date.now()),
++        }))
++    : []
++  const unique = new Map<string, SessionRunRef>()
++  for (const ref of refs) unique.set(ref.id, ref)
++  return {
++    backgroundModeEnabled: Boolean(input.backgroundModeEnabled),
++    trackedTaskRefs: Array.from(unique.values()).sort((a, b) => b.detachedAt - a.detachedAt),
++    threadRootSessionID:
++      typeof input.threadRootSessionID === "string" && input.threadRootSessionID.trim() ? input.threadRootSessionID.trim() : undefined,
++  }
++}
++
++function normalizeThreadState(value: unknown, fallbackRootSessionID: string): BackgroundThreadState {
++  const input = value && typeof value === "object" ? (value as Partial<BackgroundThreadState>) : {}
++  return {
++    rootSessionID:
++      typeof input.rootSessionID === "string" && input.rootSessionID.trim() ? input.rootSessionID.trim() : fallbackRootSessionID,
++    foregroundSessionID:
++      typeof input.foregroundSessionID === "string" && input.foregroundSessionID.trim()
++        ? input.foregroundSessionID.trim()
++        : fallbackRootSessionID,
++    title: typeof input.title === "string" && input.title.trim() ? input.title.trim() : undefined,
++  }
++}
++
++function loadSessionState(api: TuiPluginApi, sessionID: string): SessionBackgroundState {
++  return normalizeSessionBackgroundState(api.kv.get(buildSessionStateKey(sessionID), undefined))
++}
++
++function saveSessionState(api: TuiPluginApi, sessionID: string, state: SessionBackgroundState) {
++  api.kv.set(buildSessionStateKey(sessionID), normalizeSessionBackgroundState(state))
++}
++
++function loadThreadState(api: TuiPluginApi, rootSessionID: string): BackgroundThreadState {
++  return normalizeThreadState(api.kv.get(buildThreadStateKey(rootSessionID), undefined), rootSessionID)
++}
++
++function saveInspectionState(api: TuiPluginApi, state: Record<string, unknown> | undefined) {
++  api.kv.set(buildInspectionStateKey(), state)
++}
++
++function resolveThreadRootSessionID(state: SessionBackgroundState, sessionInfo: { id: string; parentID?: string }): string {
++  return state.threadRootSessionID || sessionInfo.parentID || sessionInfo.id
++}
++
++function resolveShellSessionID(api: TuiPluginApi, sessionID?: string): string | undefined {
++  if (!sessionID) return undefined
++  const state = loadSessionState(api, sessionID)
++  return state.threadRootSessionID || sessionID
++}
++
++async function fetchSessionInfo(api: TuiPluginApi, sessionID: string) {
++  const result = await api.client.session.get({ sessionID }).catch(() => undefined)
++  return result?.data as { id: string; parentID?: string; title?: string } | undefined
++}
++
++async function fetchSessionMessages(api: TuiPluginApi, sessionID: string) {
++  const result = await api.client.session.messages({ sessionID, limit: 200 }).catch(() => undefined)
++  return (result?.data ?? []) as SessionMessageRecord[]
++}
++
++function summarizeMessageParts(parts: Part[]): string | undefined {
++  const text = parts
++    .filter((part) => part.type === "text")
++    .map((part) => String((part as any).text ?? ""))
++    .join(" ")
++  return summarize(text)
++}
++
++function extractBackgroundToken(parts: Part[]): string | undefined {
++  for (const part of parts) {
++    if (part.type !== "text") continue
++    const token = (part as any).metadata?.bgTaskToken
++    if (typeof token === "string" && token.trim()) return token.trim()
++  }
++  return undefined
++}
++
++function buildStatus(input: { assistant?: Message; hasPendingInput: boolean }): TaskRecord["status"] {
++  if (input.assistant?.error) return "error"
++  if (!input.assistant) return "queued"
++  if (input.assistant.time?.completed) return "done"
++  if (input.hasPendingInput) return "needs_input"
++  return "running"
++}
++
++async function buildSnapshot(api: TuiPluginApi, sessionID: string): Promise<Snapshot> {
++  const sessionInfo = await fetchSessionInfo(api, sessionID)
++  if (!sessionInfo?.id) return { items: [] }
++
++  const currentState = loadSessionState(api, sessionID)
++  const rootSessionID = resolveThreadRootSessionID(currentState, sessionInfo)
++  const threadState = loadThreadState(api, rootSessionID)
++  const sessionsResult = await api.client.session.list({
++    directory: api.state.path.directory || api.state.path.worktree || process.cwd(),
++    limit: 200,
++  })
++  const sessions = (sessionsResult?.data ?? []) as Array<{ id: string; parentID?: string }>
++  const threadSessionIDs = sessions.filter((item) => item.id === rootSessionID || item.parentID === rootSessionID).map((item) => item.id)
++  if (!threadSessionIDs.includes(rootSessionID)) threadSessionIDs.unshift(rootSessionID)
++  const backgroundSessionIDs = threadSessionIDs.filter((candidate) => candidate !== threadState.foregroundSessionID)
++
++  const items: TaskRecord[] = []
++  for (const candidateSessionID of backgroundSessionIDs) {
++    const state = loadSessionState(api, candidateSessionID)
++    if (!state.trackedTaskRefs.length) continue
++
++    const messages = await fetchSessionMessages(api, candidateSessionID)
++    const userMessages = new Map<string, SessionMessageRecord>()
++    const assistantByParent = new Map<string, SessionMessageRecord>()
++    for (const message of messages) {
++      if (message.info.role === "user") userMessages.set(message.info.id, message)
++      if (message.info.role === "assistant") {
++        const parentID = (message.info as Message & { parentID?: string }).parentID
++        if (!parentID) continue
++        const previous = assistantByParent.get(parentID)
++        const previousCreated = Number(previous?.info.time?.created ?? 0)
++        const currentCreated = Number(message.info.time?.created ?? 0)
++        if (!previous || currentCreated >= previousCreated) assistantByParent.set(parentID, message)
++      }
++    }
++
++    const hasPendingInput = api.state.session.permission(candidateSessionID).length > 0 || api.state.session.question(candidateSessionID).length > 0
++
++    for (const ref of state.trackedTaskRefs) {
++      let userRecord = ref.parentUserMessageID ? userMessages.get(ref.parentUserMessageID) : undefined
++      if (!userRecord && ref.bgTaskToken) {
++        userRecord = Array.from(userMessages.values()).find((item) => extractBackgroundToken(item.parts) === ref.bgTaskToken)
++      }
++      const parentUserMessageID = userRecord?.info.id ?? ref.parentUserMessageID
++      const assistantRecord = parentUserMessageID ? assistantByParent.get(parentUserMessageID) : undefined
++      items.push({
++        id: ref.id,
++        sessionID: candidateSessionID,
++        sequence: ref.sequence,
++        title: ref.title || summarizeMessageParts(userRecord?.parts ?? []) || "Tarea en background",
++        status: buildStatus({ assistant: assistantRecord?.info, hasPendingInput }),
++        mode: "same-session",
++        parentUserMessageID,
++        assistantMessageID: assistantRecord?.info.id ?? ref.assistantMessageID,
++        inspectionHostSessionID: ref.inspectionHostSessionID,
++        currentSession: candidateSessionID === sessionID,
++      })
++    }
++  }
++
++  return {
++    title: threadState.title,
++    items: items.sort(compareTaskOrder),
++  }
++}
++
++async function ensureInspectionHostSession(api: TuiPluginApi, task: TaskRecord, returnSessionID?: string): Promise<string> {
++  if (!task.sessionID) return returnSessionID || ""
++  if (!returnSessionID || task.sessionID !== returnSessionID) return task.sessionID
++
++  const state = loadSessionState(api, task.sessionID)
++  const ref = state.trackedTaskRefs.find(
++    (candidate) =>
++      candidate.id === task.id ||
++      (task.parentUserMessageID && candidate.parentUserMessageID === task.parentUserMessageID) ||
++      (task.assistantMessageID && candidate.assistantMessageID === task.assistantMessageID),
++  )
++  if (ref?.inspectionHostSessionID) {
++    const existing = await fetchSessionInfo(api, ref.inspectionHostSessionID)
++    if (existing?.id) return existing.id
++  }
++
++  const created = await api.client.session.create({ parentID: returnSessionID, title: task.title || "Vista background" }).catch(() => undefined)
++  const hostSessionID = created?.data?.id as string | undefined
++  if (!hostSessionID) return task.sessionID
++
++  const hostState = loadSessionState(api, hostSessionID)
++  hostState.backgroundModeEnabled = false
++  hostState.threadRootSessionID = returnSessionID
++  saveSessionState(api, hostSessionID, hostState)
++
++  if (ref) {
++    ref.inspectionHostSessionID = hostSessionID
++    saveSessionState(api, task.sessionID, state)
++  }
++  return hostSessionID
++}
++
++function View(props: { api: TuiPluginApi; session_id: string }) {
++  const [open, setOpen] = createSignal(true)
++  const [snapshot, setSnapshot] = createSignal<Snapshot>({ items: [] })
++  const theme = () => props.api.theme.current
++  const visibleItems = createMemo(() => snapshot().items.slice(-VISIBLE_LIMIT).reverse())
++  const hiddenCount = createMemo(() => Math.max(snapshot().items.length - visibleItems().length, 0))
++
++  const refresh = async () => {
++    const shellSessionID = resolveShellSessionID(props.api, props.session_id) || props.session_id
++    setSnapshot(await buildSnapshot(props.api, shellSessionID))
++  }
++
++  const openTask = async (task: TaskRecord) => {
++    const currentRoute = props.api.route.current
++    const currentRouteID = currentRoute.name === "session" ? String(currentRoute.params.sessionID) : undefined
++    const returnSessionID = resolveShellSessionID(props.api, currentRouteID) || currentRouteID || task.sessionID
++    const hostSessionID = await ensureInspectionHostSession(props.api, task, returnSessionID)
++    saveInspectionState(props.api, {
++      sessionID: hostSessionID,
++      sourceSessionID: task.sessionID,
++      returnSessionID: returnSessionID || undefined,
++      taskSource: "session-run",
++      taskID: task.id,
++      parentUserMessageID: task.parentUserMessageID,
++      assistantMessageID: task.assistantMessageID,
++    })
++    if (hostSessionID && hostSessionID !== currentRouteID) props.api.route.navigate("session", { sessionID: hostSessionID })
++  }
++
++  onMount(() => {
++    void refresh()
++    const interval = setInterval(() => void refresh(), POLL_INTERVAL_MS)
++    onCleanup(() => clearInterval(interval))
++  })
++
++  return (
++    <box>
++      <box flexDirection="row" gap={1} onMouseDown={() => setOpen((value) => !value)}>
++        <text fg={theme().text}>{open() ? "▼" : "▶"}</text>
++        <text fg={theme().text}>
++          <b>Background Tasks</b>
++        </text>
++      </box>
++      <Show when={open()}>
++        <Show when={snapshot().items.length === 0}>
++          <text fg={theme().textMuted}>No background tasks for this session.</text>
++        </Show>
++        <For each={visibleItems()}>
++          {(item) => {
++            const presentation = createMemo(() => getStatusPresentation(item.status))
++            return (
++              <box flexDirection="column" onMouseUp={() => void openTask(item)}>
++                <text fg={theme().text} wrapMode="word">
++                  {displayTaskTitle(item, presentation().icon)}
++                </text>
++              </box>
++            )
++          }}
++        </For>
++        <Show when={hiddenCount() > 0}>
++          <text fg={theme().textMuted} onMouseDown={() => props.api.command.trigger("bg-tasks")}>+{hiddenCount()} more · /bg-tasks</text>
++        </Show>
++      </Show>
++    </box>
++  )
++}
++
++const tui: TuiPlugin = async (api) => {
++  api.slots.register({
++    order: 350,
++    slots: {
++      sidebar_content(_ctx, props) {
++        return <View api={api} session_id={props.session_id} />
++      },
++    },
++  })
++}
++
++const plugin: TuiPluginModule & { id: string } = {
++  id,
++  tui,
++}
++
++export default plugin
 diff --git a/packages/opencode/src/cli/cmd/tui/plugin/api.tsx b/packages/opencode/src/cli/cmd/tui/plugin/api.tsx
 index 25ea3ac..84cef8b 100644
 --- a/packages/opencode/src/cli/cmd/tui/plugin/api.tsx
@@ -513,6 +920,26 @@ index 25ea3ac..84cef8b 100644
              onSubmit={props.onSubmit}
              ref={props.ref}
              hint={props.hint}
+diff --git a/packages/opencode/src/cli/cmd/tui/plugin/internal.ts b/packages/opencode/src/cli/cmd/tui/plugin/internal.ts
+index 2b0d859..5dbcaf4 100644
+--- a/packages/opencode/src/cli/cmd/tui/plugin/internal.ts
++++ b/packages/opencode/src/cli/cmd/tui/plugin/internal.ts
+@@ -1,6 +1,7 @@
+ import HomeFooter from "../feature-plugins/home/footer"
+ import HomeTips from "../feature-plugins/home/tips"
+ import SidebarContext from "../feature-plugins/sidebar/context"
++import SidebarBackgroundTasks from "../feature-plugins/sidebar/background-tasks"
+ import SidebarMcp from "../feature-plugins/sidebar/mcp"
+ import SidebarLsp from "../feature-plugins/sidebar/lsp"
+ import SidebarTodo from "../feature-plugins/sidebar/todo"
+@@ -20,6 +21,7 @@ export const INTERNAL_TUI_PLUGINS: InternalTuiPlugin[] = [
+   HomeFooter,
+   HomeTips,
+   SidebarContext,
++  SidebarBackgroundTasks,
+   SidebarMcp,
+   SidebarLsp,
+   SidebarTodo,
 diff --git a/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts b/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts
 index 73193d1..92c860f 100644
 --- a/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts
@@ -526,7 +953,7 @@ index 73193d1..92c860f 100644
      keybind: api.keybind,
      tuiConfig: api.tuiConfig,
 diff --git a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
-index d43edd2..1e304ac 100644
+index d43edd2..571f192 100644
 --- a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
 +++ b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
 @@ -6,6 +6,7 @@ import {
@@ -607,13 +1034,13 @@ index d43edd2..1e304ac 100644
 +      questionsBySession: sync.data.question,
 +      kv,
 +    })
-+    return {
-+      canonicalSessionID: projection?.canonicalSessionID ?? defaultProjection.canonicalSessionID,
-+      activeSessionID: projection?.activeSessionID ?? defaultProjection.activeSessionID,
-+      visibleMessages: projection?.visibleMessages ?? defaultProjection.visibleMessages,
-+      promptTargetSessionID: projection?.promptTargetSessionID ?? defaultProjection.promptTargetSessionID,
-+      promptVisible: projection?.promptVisible ?? defaultProjection.promptVisible,
-+      allowSubmitWhenBusy: projection?.allowSubmitWhenBusy ?? defaultProjection.allowSubmitWhenBusy,
++      return {
++        canonicalSessionID: projection?.canonicalSessionID ?? defaultProjection.canonicalSessionID,
++        activeSessionID: projection?.activeSessionID ?? defaultProjection.activeSessionID,
++        visibleMessages: projection?.visibleMessages ?? defaultProjection.visibleMessages,
++        promptTargetSessionID: projection?.promptTargetSessionID ?? defaultProjection.promptTargetSessionID,
++        promptVisible: projection?.promptVisible ?? defaultProjection.promptVisible,
++        allowSubmitWhenBusy: projection?.allowSubmitWhenBusy ?? defaultProjection.allowSubmitWhenBusy,
 +      permissionSessionID: projection?.permissionSessionID,
 +      questionSessionID: projection?.questionSessionID,
 +      inspection: projection?.inspection ?? defaultProjection.inspection,

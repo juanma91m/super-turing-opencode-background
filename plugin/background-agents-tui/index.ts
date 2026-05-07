@@ -863,6 +863,54 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     });
   };
 
+  const completeSupersededAssistants = (items: ReadonlyArray<Message>) => {
+    const assistantsByParent = new Map<
+      string,
+      Array<{ id: string; createdAt: number; completedAt?: number; order: number }>
+    >();
+
+    for (const [order, item] of items.entries()) {
+      if (item.role !== "assistant" || !item.id) continue;
+      const parentID = (item as Message & { parentID?: string }).parentID;
+      if (!parentID) continue;
+      const createdAt = Number(item.time.created ?? 0);
+      const completedAt = Number(item.time.completed ?? 0) || undefined;
+      const group = assistantsByParent.get(parentID) ?? [];
+      group.push({ id: item.id, createdAt, completedAt, order });
+      assistantsByParent.set(parentID, group);
+    }
+
+    const staleCompletionTimes = new Map<string, number>();
+    for (const group of assistantsByParent.values()) {
+      const ordered = group
+        .slice()
+        .sort((a, b) => a.createdAt - b.createdAt || a.order - b.order);
+      for (let index = 0; index < ordered.length - 1; index += 1) {
+        const current = ordered[index];
+        if (current.completedAt) continue;
+        const next = ordered[index + 1];
+        staleCompletionTimes.set(
+          current.id,
+          next.completedAt || next.createdAt || current.createdAt,
+        );
+      }
+    }
+
+    if (staleCompletionTimes.size === 0) return [...items];
+
+    return items.map((item) => {
+      const completedAt = item.id ? staleCompletionTimes.get(item.id) : undefined;
+      if (!completedAt || item.role !== "assistant") return item;
+      return {
+        ...item,
+        time: {
+          ...(item.time ?? {}),
+          completed: item.time.completed ?? completedAt,
+        },
+      } satisfies Message;
+    });
+  };
+
   const buildSessionProjection = (
     context: TuiSessionAdapterContext,
   ): TuiSessionProjection | undefined => {
@@ -889,29 +937,35 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
 
     const visibleMessages = (() => {
       if (inspectionActive) {
-        if (inspection?.taskSource === "delegation") return [...activeMessages];
+        if (inspection?.taskSource === "delegation")
+          return completeSupersededAssistants(activeMessages);
         if (
           inspection?.sessionID === shellSessionID &&
           (inspection.parentUserMessageID || inspection.assistantMessageID)
         ) {
-          return activeMessages.filter((item) => {
-            if (item.role === "user")
-              return item.id === inspection.parentUserMessageID;
-            if (
-              inspection.assistantMessageID &&
-              item.id === inspection.assistantMessageID
-            )
-              return true;
-            return inspection.parentUserMessageID
-              ? (item as Message & { parentID?: string }).parentID ===
-                  inspection.parentUserMessageID
-              : false;
-          });
+          return completeSupersededAssistants(
+            activeMessages.filter((item) => {
+              if (item.role === "user")
+                return item.id === inspection.parentUserMessageID;
+              if (
+                inspection.assistantMessageID &&
+                item.id === inspection.assistantMessageID
+              )
+                return true;
+              return inspection.parentUserMessageID
+                ? (item as Message & { parentID?: string }).parentID ===
+                    inspection.parentUserMessageID
+                : false;
+            }),
+          );
         }
-        return filterTrackedMessages(activeMessages, activeSessionState);
+        return completeSupersededAssistants(
+          filterTrackedMessages(activeMessages, activeSessionState),
+        );
       }
 
-      if (!technicalThreadRootID) return [...activeMessages];
+      if (!technicalThreadRootID)
+        return completeSupersededAssistants(activeMessages);
 
       const ids = new Set<string>([
         shellSessionID,
@@ -930,7 +984,8 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           ids.add(item.id);
       }
 
-      return Array.from(ids)
+      return completeSupersededAssistants(
+        Array.from(ids)
         .flatMap((sessionID) =>
           filterTrackedMessages(
             context.messagesBySession[sessionID] ?? [],
@@ -944,7 +999,8 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           if (a.id < b.id) return -1;
           if (a.id > b.id) return 1;
           return 0;
-        });
+        }),
+      );
     })();
 
     const permissions = context.permissionsBySession[activeSessionID] ?? [];
