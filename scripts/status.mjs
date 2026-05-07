@@ -6,10 +6,7 @@ import { inspectPatch } from "../lib/patch.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
 import { resolveCompatibleMode } from "../lib/compat.mjs";
-import {
-  inspectManagedLocalInstall,
-  inspectManagedLocalInstallRoot,
-} from "../lib/local-install.mjs";
+import { inspectManagedLocalInstallRoot } from "../lib/local-install.mjs";
 
 await runCli("status", async (options) => {
   const manifest = await loadManifest();
@@ -20,10 +17,22 @@ await runCli("status", async (options) => {
     installRoot: options.installRoot,
   });
   const requestedInstallRoot = options.installRoot || target.installRoot;
+  const managedLocalInstall = requestedInstallRoot
+    ? await inspectManagedLocalInstallRoot(requestedInstallRoot, state)
+    : {
+        adopted: false,
+        candidateManaged: false,
+        stateActive: false,
+        health: "inactive",
+        restoreAvailable: false,
+        drift: false,
+        problems: [],
+      };
   const activeManagedInstall =
-    state?.mode === "managed-local-install" &&
-    state?.managedLocalInstall?.installRoot === requestedInstallRoot
-      ? state.managedLocalInstall
+    managedLocalInstall.candidateManaged ||
+    (state?.mode === "managed-local-install" &&
+      state?.managedLocalInstall?.installRoot === requestedInstallRoot)
+      ? managedLocalInstall
       : undefined;
   const mode = activeManagedInstall
     ? {
@@ -57,12 +66,14 @@ await runCli("status", async (options) => {
       : mode.supported
         ? { ok: true, clean: true, message: "not_required" }
         : { ok: false, clean: false, message: "target unsupported" };
-  const managedLocalInstall = options.installRoot
-    ? await inspectManagedLocalInstallRoot(options.installRoot, state)
-    : await inspectManagedLocalInstall(state);
-  const managedStorage = state?.managedLocalInstall?.storage;
+  const managedStorage = managedLocalInstall.storage;
   const managedStorageBackupRoot =
     state?.managedLocalInstall?.storageBackupRoot;
+  const managedHealth = managedLocalInstall.candidateManaged
+    ? managedLocalInstall.health
+    : mode.id === "managed-local-install"
+      ? "available"
+      : "inactive";
 
   return {
     addon: {
@@ -94,7 +105,10 @@ await runCli("status", async (options) => {
       `compat version: ${supportedVersion ? "ok" : "unsupported"}`,
       `mode: ${mode.id}`,
       `worktree: ${worktree.ok ? (worktree.message === "not_required" ? "not_required" : worktree.clean ? "clean" : "dirty") : "n/a"}`,
-      `managed-local-install: ${managedLocalInstall.adopted ? "adopted" : mode.id === "managed-local-install" ? "available" : "inactive"}`,
+      `managed-local-install: ${managedHealth}`,
+      ...(managedLocalInstall.problems?.length
+        ? [`managed-local-install problems: ${managedLocalInstall.problems.join(", ")}`]
+        : []),
       managedStorage?.dbPath
         ? `session db: ${managedStorage.dbPath}`
         : "session db: unresolved",

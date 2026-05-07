@@ -43,16 +43,6 @@ await runCli("disable", async (options) => {
     if (!worktree.ok) {
       fail({ message: worktree.message }, 2);
     }
-    if (!options.dryRun && mode.requiresCleanWorktree && !worktree.clean) {
-      fail(
-        {
-          message:
-            "El checkout de OpenCode no está limpio; no es seguro deshabilitar el addon automáticamente.",
-          details: worktree.entries.slice(0, 10),
-        },
-        3,
-      );
-    }
   }
 
   const patchResult = mode.patchRequired
@@ -81,7 +71,7 @@ await runCli("disable", async (options) => {
       `mode: ${mode.id}`,
       `patch: ${patchResult.state}`,
       `plugin: ${pluginResult.state}`,
-      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : "dirty (dry-run allowed)") : "not_required"}`,
+      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,
       pluginResult.state === "modified"
         ? "el plugin instalado fue modificado manualmente y no se eliminó"
         : "plugin revertido de forma segura",

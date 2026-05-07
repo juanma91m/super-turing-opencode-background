@@ -44,16 +44,6 @@ await runCli("reapply", async (options) => {
     if (!worktree.ok) {
       fail({ message: worktree.message }, 2);
     }
-    if (!options.dryRun && mode.requiresCleanWorktree && !worktree.clean) {
-      fail(
-        {
-          message:
-            "El checkout de OpenCode no está limpio; no es seguro re-aplicar el addon automáticamente.",
-          details: worktree.entries.slice(0, 10),
-        },
-        3,
-      );
-    }
   }
 
   const pluginResult = await installPlugin(
@@ -119,7 +109,7 @@ await runCli("reapply", async (options) => {
       `plugin: ${pluginResult.state}`,
       `patch: ${patchResult.state}`,
       `version: ${target.version}`,
-      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : "dirty (dry-run allowed)") : "not_required"}`,
+      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,
     ],
   };
 });

@@ -3,6 +3,7 @@ import { fail, runCli } from "../lib/cli.mjs";
 import { loadState, saveState } from "../lib/state.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { ensureCompatibleMode } from "../lib/compat.mjs";
+import { inspectPlugin } from "../lib/plugin.mjs";
 import {
   adoptManagedLocalInstall,
   backupStorageRoots,
@@ -34,7 +35,14 @@ await runCli("adopt-local-install", async (options) => {
     compat: manifest.compat,
     installRoot: options.installRoot,
   });
-  const localMode = ensureCompatibleMode(manifest, localTarget);
+  const localInspection = localTarget.installRoot
+    ? await inspectManagedLocalInstallRoot(localTarget.installRoot, previousState)
+    : { candidateManaged: false };
+  const localMode = localInspection.candidateManaged
+    ? {
+        id: "managed-local-install",
+      }
+    : ensureCompatibleMode(manifest, localTarget);
   if (localMode.id !== "managed-local-install") {
     fail(
       {
@@ -70,6 +78,21 @@ await runCli("adopt-local-install", async (options) => {
     );
   }
 
+  const plugin = await inspectPlugin(
+    manifest.pluginSourcePath,
+    manifest.installedPluginPath,
+  );
+  if (plugin.state !== "installed") {
+    fail(
+      {
+        message:
+          "managed-local-install requiere que el plugin del addon ya esté instalado. Corré enable --opencode-root sobre el mismo checkout fuente antes de adoptar la instalación local.",
+        details: [`plugin: ${plugin.state}`],
+      },
+      plugin.state === "modified" ? 3 : 2,
+    );
+  }
+
   const bunPath = detectBunPath(options.bunPath);
   const runtimeBinary = await ensureBuiltOpencodeBinary({
     checkoutRoot: sourceTarget.root,
@@ -87,14 +110,38 @@ await runCli("adopt-local-install", async (options) => {
     );
   }
 
-  const inspection = options.installRoot
-    ? await inspectManagedLocalInstallRoot(options.installRoot, previousState)
-    : await inspectManagedLocalInstall(previousState);
-  if (inspection.adopted) {
+  if (
+    previousState?.mode === "managed-local-install" &&
+    previousState?.managedLocalInstall?.installRoot &&
+    previousState.managedLocalInstall.installRoot !== installRoot
+  ) {
     fail(
       {
         message:
-          "La instalación local ya parece administrada por el addon. Revisá status o corré restore-local-install antes de volver a adoptar.",
+          "Ya existe otra instalación local administrada registrada por el addon. Corré restore-local-install sobre ese root antes de adoptar uno distinto.",
+        details: [
+          `active install root: ${previousState.managedLocalInstall.installRoot}`,
+          `requested install root: ${installRoot}`,
+        ],
+      },
+      3,
+    );
+  }
+
+  const inspection = localTarget.installRoot
+    ? localInspection
+    : await inspectManagedLocalInstall(previousState);
+  if (inspection.candidateManaged) {
+    fail(
+      {
+        message:
+          "La instalación local ya parece administrada o quedó en un estado reconocible por el addon. Revisá status o corré restore-local-install antes de volver a adoptar.",
+        details: [
+          `health: ${inspection.health ?? "unknown"}`,
+          ...(inspection.problems?.length
+            ? [`problems: ${inspection.problems.join(", ")}`]
+            : []),
+        ],
       },
       3,
     );
@@ -114,7 +161,11 @@ await runCli("adopt-local-install", async (options) => {
   const result = await adoptManagedLocalInstall({
     installRoot,
     backupPath,
-    runtimeBinaryPath: runtimeBinary.binaryPath,
+    checkoutRoot: sourceTarget.root,
+    checkoutVersion: sourceTarget.version,
+    bunPath,
+    sourceRuntimeBinaryPath: runtimeBinary.binaryPath,
+    runtimeBinaryState: runtimeBinary.state,
     storage,
     addonId: manifest.addon.id,
     dryRun: options.dryRun,
@@ -134,12 +185,20 @@ await runCli("adopt-local-install", async (options) => {
       checkoutRoot: sourceTarget.root,
       checkoutVersion: sourceTarget.version,
       bunPath,
-      runtimeBinaryPath: runtimeBinary.binaryPath,
+      runtimeBinaryPath: result.runtimeBinaryPath,
+      sourceRuntimeBinaryPath: runtimeBinary.binaryPath,
       runtimeBinaryState: runtimeBinary.state,
       storage,
       storageBackupRoot,
       storageBackup,
       sourcePatchPath: sourceMode.patchPath,
+    },
+    plugin: {
+      sourcePath: manifest.pluginSourcePath,
+      installedPath: manifest.installedPluginPath,
+      sourceHash: plugin.sourceHash,
+      installedHash: plugin.installedHash,
+      state: plugin.state,
     },
   };
 
@@ -156,8 +215,10 @@ await runCli("adopt-local-install", async (options) => {
       `install root: ${installRoot}`,
       `backup: ${backupPath}`,
       `checkout: ${sourceTarget.root}`,
+      `plugin: ${plugin.state}`,
       `bun: ${bunPath}`,
-      `runtime binary: ${runtimeBinary.binaryPath}`,
+      `source runtime binary: ${runtimeBinary.binaryPath}`,
+      `managed runtime binary: ${result.runtimeBinaryPath}`,
       `binary prep: ${runtimeBinary.state}`,
       `session db: ${storage.dbPath}`,
       `storage backup: ${storageBackupRoot}`,
