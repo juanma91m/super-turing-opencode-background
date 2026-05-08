@@ -46,23 +46,25 @@ await runCli("reapply", async (options) => {
     }
   }
 
-  const pluginResult = await installPlugin(
-    manifest.pluginSourcePath,
-    manifest.installedPluginPath,
-    {
+  const pluginResults = [];
+  for (const plugin of manifest.plugins) {
+    const result = await installPlugin(plugin.sourcePath, plugin.installedPath, {
       dryRun: options.dryRun,
-    },
-  );
+      replaceCompatibleInstalledHashes:
+        plugin.manifest.compatibleInstalledHashes || [],
+    });
 
-  if (pluginResult.state === "modified") {
-    fail(
-      {
-        message:
-          "El plugin instalado fue modificado manualmente; el addon no lo sobreescribe automáticamente.",
-        details: [manifest.installedPluginPath],
-      },
-      3,
-    );
+    if (result.state === "modified") {
+      fail(
+        {
+          message:
+            "Uno de los plugins instalados fue modificado manualmente; el addon no lo sobreescribe automáticamente.",
+          details: [plugin.installedPath],
+        },
+        3,
+      );
+    }
+    pluginResults.push({ plugin, result });
   }
 
   const patchResult = mode.patchRequired
@@ -89,14 +91,17 @@ await runCli("reapply", async (options) => {
       sha256: mode.patchPath ? await sha256File(mode.patchPath) : undefined,
       state: patchResult.state,
     },
-    plugin: {
-      sourcePath: manifest.pluginSourcePath,
-      installedPath: manifest.installedPluginPath,
-      sourceHash: await sha256File(manifest.pluginSourcePath),
-      installedHash: pluginResult.installedHash || pluginResult.sourceHash,
-      state: pluginResult.state,
-    },
-  };
+      plugins: await Promise.all(
+        pluginResults.map(async ({ plugin, result }) => ({
+          id: plugin.manifest.id,
+          sourcePath: plugin.sourcePath,
+          installedPath: plugin.installedPath,
+          sourceHash: await sha256File(plugin.sourcePath),
+          installedHash: result.installedHash || result.sourceHash,
+          state: result.state,
+        })),
+      ),
+    };
 
   if (!options.dryRun) await saveState(manifest.stateFile, state);
 
@@ -106,10 +111,10 @@ await runCli("reapply", async (options) => {
       : `Addon re-aplicado sobre ${targetLabel}`,
     details: [
       `mode: ${mode.id}`,
-      `plugin: ${pluginResult.state}`,
-      `patch: ${patchResult.state}`,
-      `version: ${target.version}`,
-      `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,
+        `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
+        `patch: ${patchResult.state}`,
+        `version: ${target.version}`,
+        `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,
     ],
   };
 });

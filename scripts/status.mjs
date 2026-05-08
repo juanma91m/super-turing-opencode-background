@@ -46,10 +46,16 @@ await runCli("status", async (options) => {
       }
     : resolveCompatibleMode(manifest, target);
   const targetLabel = target.root || target.execPath || target.method;
-  const plugin = await inspectPlugin(
-    manifest.pluginSourcePath,
-    manifest.installedPluginPath,
+  const plugins = await Promise.all(
+    manifest.plugins.map(async (plugin) => ({
+      plugin,
+      status: await inspectPlugin(
+        plugin.sourcePath,
+        plugin.installedPath,
+      ),
+    })),
   );
+  const plugin = plugins[0]?.status;
   const supportedVersion = activeManagedInstall
     ? Boolean(activeManagedInstall.checkoutVersion)
     : mode.supported;
@@ -90,6 +96,7 @@ await runCli("status", async (options) => {
       patchPath,
     },
     plugin,
+    plugins,
     patch,
     worktree,
     managedLocalInstall,
@@ -100,7 +107,7 @@ await runCli("status", async (options) => {
       ? `Target compatible detectado en ${targetLabel}`
       : target.message,
     details: [
-      `plugin: ${plugin.state}`,
+      `plugins: ${plugins.map(({ plugin, status }) => `${plugin.manifest.id}=${status.state}`).join(", ")}`,
       `patch: ${patch.state}`,
       `compat version: ${supportedVersion ? "ok" : "unsupported"}`,
       `mode: ${mode.id}`,

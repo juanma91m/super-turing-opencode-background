@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createElement } from "@opentui/solid";
+import { createSignal } from "solid-js";
 import type { Message, Part, TextPartInput } from "@opencode-ai/sdk/v2";
 import type {
   TuiPlugin,
@@ -134,6 +135,7 @@ const TOASTABLE_STATUSES = new Set([
 ]);
 const SESSION_STATE_PREFIX = "background-agents-tui";
 const MAX_TRACKED_SESSION_RUNS = 25;
+const SIDEBAR_BG_COLLAPSED_KEY = `${SESSION_STATE_PREFIX}:sidebar:collapsed`;
 
 function hashString(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 16);
@@ -350,68 +352,42 @@ function toIsoTime(value?: number | string): string | undefined {
   return new Date(value).toISOString();
 }
 
-function buildFooter(snapshot: Snapshot): string {
-  const parts = [
-    `BG`,
-    `p:${snapshot.counts.pending}`,
-    `r:${snapshot.counts.running}`,
-    `c:${snapshot.counts.complete}`,
-    `e:${snapshot.counts.error}`,
+function buildSidebarSections(input: {
+  snapshot: Snapshot;
+  collapsed: boolean;
+  onToggle: () => void;
+  onOpenTasks: () => void;
+  onTaskSelect: (item: TaskRecord) => void;
+}) {
+  const ordered = input.snapshot.items.slice().sort(compareTaskDialogOrder);
+  const visibleItems = ordered.slice(-5).reverse();
+  const hiddenCount = Math.max(ordered.length - visibleItems.length, 0);
+  return [
+    {
+      id: "background-tasks",
+      title: "Background Tasks",
+      priority: 350,
+      compact: true,
+      collapsed: input.collapsed,
+      onToggle: input.onToggle,
+      items: visibleItems.map((item) => {
+        const presentation = getStatusPresentation(item.status);
+        return {
+          id: item.id,
+          title: displayTaskTitle(item, presentation.icon),
+          onSelect: () => input.onTaskSelect(item),
+        };
+      }),
+      emptyState: "No background tasks for this session.",
+      hint:
+        hiddenCount > 0
+          ? {
+              text: `+${hiddenCount} more · /bg-tasks`,
+              onSelect: input.onOpenTasks,
+            }
+          : undefined,
+    },
   ];
-  if (snapshot.counts.review_pending > 0)
-    parts.push(`revisión:${snapshot.counts.review_pending}`);
-  if (snapshot.counts.needs_input > 0)
-    parts.push(`input:${snapshot.counts.needs_input}`);
-  if (snapshot.backgroundModeEnabled) parts.push(`same-session:activo`);
-  parts.push(`/bg-tasks`);
-  return parts.join(" · ");
-}
-
-function renderFooter(snapshot: Snapshot) {
-  return createElement(
-    "box",
-    {
-      paddingLeft: 1,
-      paddingRight: 1,
-    },
-    createElement("text", {}, buildFooter(snapshot)),
-  );
-}
-
-function renderSidebarSummary(snapshot: Snapshot) {
-  return createElement(
-    "box",
-    {
-      border: true,
-      paddingTop: 1,
-      paddingBottom: 1,
-      paddingLeft: 2,
-      paddingRight: 2,
-      flexDirection: "column",
-      gap: 1,
-    },
-    createElement("text", {}, "Tareas en background"),
-    createElement(
-      "text",
-      {},
-      `pendientes ${snapshot.counts.pending} · corriendo ${snapshot.counts.running}`,
-    ),
-    createElement(
-      "text",
-      {},
-      `completas ${snapshot.counts.complete} · error ${snapshot.counts.error}`,
-    ),
-    snapshot.counts.review_pending > 0
-      ? createElement("text", {}, `revisión ${snapshot.counts.review_pending}`)
-      : null,
-    snapshot.counts.needs_input > 0
-      ? createElement("text", {}, `input ${snapshot.counts.needs_input}`)
-      : null,
-    snapshot.backgroundModeEnabled
-      ? createElement("text", {}, `modo background same-session activo`)
-      : null,
-    createElement("text", {}, "/bg-tasks"),
-  );
 }
 
 function buildSessionStateKey(sessionID: string): string {
@@ -618,6 +594,7 @@ function countItems(items: TaskRecord[]): Snapshot["counts"] {
 
 async function readProjectDelegations(
   projectDirectory: string,
+  allowedParentSessionIDs?: ReadonlySet<string>,
 ): Promise<{ projectId: string; items: TaskRecord[] }> {
   const projectId = await getProjectId(projectDirectory);
   const baseDir = path.join(
@@ -634,6 +611,11 @@ async function readProjectDelegations(
     const sessionDirs = await fs.readdir(baseDir, { withFileTypes: true });
     for (const sessionDir of sessionDirs) {
       if (!sessionDir.isDirectory()) continue;
+      if (
+        allowedParentSessionIDs &&
+        !allowedParentSessionIDs.has(sessionDir.name)
+      )
+        continue;
       const sessionPath = path.join(baseDir, sessionDir.name);
       const delegationDirs = await fs
         .readdir(sessionPath, { withFileTypes: true })
@@ -732,7 +714,7 @@ function resolveThreadRootSessionID(
 }
 
 const BackgroundAgentsTui: TuiPlugin = async (api) => {
-  let snapshot: Snapshot = {
+  const [snapshot, setSnapshot] = createSignal<Snapshot>({
     items: [],
     counts: {
       pending: 0,
@@ -743,9 +725,11 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       needs_input: 0,
     },
     backgroundModeEnabled: false,
-  };
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   let lastStatuses = new Map<string, string>();
   let initializedProjectId: string | undefined;
+  let refreshSnapshotInFlight: Promise<void> | undefined;
   const fallbackSessionState = new Map<string, SessionBackgroundState>();
   const fallbackThreadState = new Map<string, BackgroundThreadState>();
   const promptRefs = new Map<string, any>();
@@ -917,6 +901,9 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     const shellSessionID = context.routeSessionID;
     if (!shellSessionID) return undefined;
 
+    if (snapshot().currentSessionID !== shellSessionID)
+      void requestSnapshotRefresh();
+
     const routeSession = context.routeSession;
     const sessionState = loadSessionState(shellSessionID);
     const inspection = loadInspectionState();
@@ -1016,6 +1003,16 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         resolveShellSessionID(shellSessionID) || shellSessionID,
       activeSessionID,
       visibleMessages,
+      sidebarSections: buildSidebarSections({
+        snapshot: snapshot(),
+        collapsed: sidebarCollapsed(),
+        onToggle: toggleSidebarCollapsed,
+        onOpenTasks: openTasksDialog,
+        onTaskSelect: (item: TaskRecord) => {
+          resetInspectionInterrupt();
+          void handleTaskSelect(item);
+        },
+      }),
       promptTargetSessionID,
       promptVisible:
         (isTechnicalForeground || !routeSession?.parentID) &&
@@ -1422,7 +1419,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     if (shellSessionID !== currentRouteSessionID()) {
       api.route.navigate("session", { sessionID: shellSessionID });
     }
-    void refreshSnapshot();
+    void requestSnapshotRefresh();
     return true;
   };
 
@@ -1490,7 +1487,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         variant: "info",
         duration: 4000,
       });
-      await refreshSnapshot();
+      await requestSnapshotRefresh();
       return;
     }
 
@@ -1519,7 +1516,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       variant: "success",
       duration: 4000,
     });
-    await refreshSnapshot();
+    await requestSnapshotRefresh();
   };
 
   const buildSessionRunRecords = async (
@@ -1650,10 +1647,10 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
   };
 
   const refreshSnapshot = async () => {
-    const delegationSnapshot = await readProjectDelegations(currentDirectory());
     const sessionID = currentRouteSessionID();
     let sessionItems: TaskRecord[] = [];
     let backgroundModeEnabled = false;
+    let delegationParentSessionIDs: Set<string> | undefined;
 
     if (sessionID) {
       const sessionsResult = await api.client.session.list({
@@ -1684,6 +1681,9 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           .map((item) => item.id);
         if (!threadSessionIDs.includes(rootSessionID))
           threadSessionIDs.unshift(rootSessionID);
+        delegationParentSessionIDs = new Set(threadSessionIDs);
+        if (threadState.foregroundSessionID)
+          delegationParentSessionIDs.add(threadState.foregroundSessionID);
         await ensureThreadSequences(rootSessionID, threadSessionIDs);
         const backgroundSessionIDs = threadSessionIDs.filter(
           (candidate) => candidate !== threadState.foregroundSessionID,
@@ -1700,6 +1700,11 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         }
       }
     }
+
+    const delegationSnapshot = await readProjectDelegations(
+      currentDirectory(),
+      delegationParentSessionIDs,
+    );
 
     const items = [...sessionItems, ...delegationSnapshot.items].sort((a, b) =>
       sortKey(b).localeCompare(sortKey(a)),
@@ -1751,10 +1756,18 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       }
     }
 
-    snapshot = next;
+    setSnapshot(next);
     initializedProjectId = next.projectId;
     lastStatuses = nextStatuses;
     api.renderer.requestRender();
+  };
+
+  const requestSnapshotRefresh = () => {
+    if (refreshSnapshotInFlight) return refreshSnapshotInFlight;
+    refreshSnapshotInFlight = refreshSnapshot().finally(() => {
+      refreshSnapshotInFlight = undefined;
+    });
+    return refreshSnapshotInFlight;
   };
 
   const openFallbackAlert = (item: TaskRecord) => {
@@ -1842,7 +1855,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       api.route.navigate("session", { sessionID: hostSessionID });
       return;
     }
-    void refreshSnapshot();
+    void requestSnapshotRefresh();
   };
 
   const openTasksDialog = () => {
@@ -1852,7 +1865,8 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       description: string;
       footer?: string;
     }> = [];
-    const taskOptions = snapshot.items
+    const taskOptions = snapshot()
+      .items
       .slice()
       .sort(compareTaskDialogOrder)
       .map((item) => {
@@ -1900,6 +1914,23 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         },
       }),
     );
+  };
+
+  const getSidebarCollapsed = () =>
+    api.kv.ready ? Boolean(api.kv.get(SIDEBAR_BG_COLLAPSED_KEY, false)) : sidebarCollapsed();
+
+  const updateSidebarCollapsed = (next: boolean) => {
+    setSidebarCollapsed(next);
+    if (api.kv.ready) api.kv.set(SIDEBAR_BG_COLLAPSED_KEY, next);
+    api.renderer.requestRender();
+  };
+
+  if (api.kv.ready) {
+    setSidebarCollapsed(Boolean(api.kv.get(SIDEBAR_BG_COLLAPSED_KEY, false)));
+  }
+
+  const toggleSidebarCollapsed = () => {
+    updateSidebarCollapsed(!getSidebarCollapsed());
   };
 
   const backgroundCurrentRun = async () => {
@@ -1982,7 +2013,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       if (shellSessionID && routeSessionID !== shellSessionID) {
         api.route.navigate("session", { sessionID: shellSessionID });
       }
-      await refreshSnapshot();
+      await requestSnapshotRefresh();
       api.ui.toast({
         title: "La tarea actual pasó a background",
         message:
@@ -2004,7 +2035,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     try {
       resetInspectionInterrupt();
       await focusForegroundSession();
-      await refreshSnapshot();
+      await requestSnapshotRefresh();
     } catch (error) {
       api.ui.toast({
         title: "No se pudo volver al foreground",
@@ -2111,9 +2142,9 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         category: "Async",
         slash: { name: "bg-tasks", aliases: ["bgtasks"] },
         suggested:
-          snapshot.counts.running > 0 ||
-          snapshot.counts.pending > 0 ||
-          snapshot.backgroundModeEnabled,
+          snapshot().counts.running > 0 ||
+          snapshot().counts.pending > 0 ||
+          snapshot().backgroundModeEnabled,
         onSelect: openTasksDialog,
       },
       {
@@ -2126,7 +2157,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         slash: { name: "bg-current", aliases: ["background-current"] },
         hidden: api.route.current.name !== "session",
         enabled: busy,
-        suggested: busy && !snapshot.backgroundModeEnabled,
+        suggested: busy && !snapshot().backgroundModeEnabled,
         onSelect: () => {
           void backgroundCurrentRun();
         },
@@ -2181,12 +2212,10 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     ];
   });
 
-  const unregisterSlots = api.slots.register({
+  api.slots.register({
     order: 1000,
     id: "background-agents-tui-footer",
     slots: {
-      sidebar_content: () => renderSidebarSummary(snapshot),
-      sidebar_footer: () => renderFooter(snapshot),
       session_prompt: (props: {
         session_id: string;
         visible?: boolean;
@@ -2217,10 +2246,6 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
             }
             props.ref?.(ref);
           },
-          right: api.ui.Slot({
-            name: "session_prompt_right",
-            session_id: promptTargetSessionID || shellSessionID,
-          }),
         });
       },
       session_notice: (props: {
@@ -2231,23 +2256,13 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           sessionID: props.session_id,
           activeSessionID: props.active_session_id,
         }),
-      session_prompt_right: (props: { session_id: string }) =>
-        snapshot.backgroundModeEnabled &&
-        props.session_id &&
-        api.state.session.status(props.session_id)?.type === "busy"
-          ? createElement(
-              "text",
-              {},
-              "Modo BG · el prompt inline usa promptAsync",
-            )
-          : null,
     },
   });
 
   clearInspectionState();
-  await refreshSnapshot();
+  await requestSnapshotRefresh();
   const interval = setInterval(() => {
-    void refreshSnapshot();
+    void requestSnapshotRefresh();
   }, POLL_INTERVAL_MS);
 
   api.lifecycle.onDispose(() => {
@@ -2256,7 +2271,6 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     unregisterSessionAdapter();
     unregisterSessionListAdapter();
     unregisterCommands();
-    unregisterSlots();
   });
 };
 

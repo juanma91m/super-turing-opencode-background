@@ -50,16 +50,22 @@ await runCli("disable", async (options) => {
         dryRun: options.dryRun,
       })
     : { changed: false, state: "not_required" };
-  const pluginResult = await removePlugin(
-    manifest.pluginSourcePath,
-    manifest.installedPluginPath,
-    state,
-    {
-      dryRun: options.dryRun,
-    },
+  const pluginResults = await Promise.all(
+    manifest.plugins.map(async (plugin) => {
+      const pluginState = state?.plugins?.find?.((item) => item.id === plugin.manifest.id) || state?.plugin;
+      const result = await removePlugin(
+        plugin.sourcePath,
+        plugin.installedPath,
+        pluginState ? { plugin: pluginState } : state,
+        {
+          dryRun: options.dryRun,
+        },
+      );
+      return { plugin, result };
+    }),
   );
 
-  if (!options.dryRun && pluginResult.state !== "modified") {
+  if (!options.dryRun && !pluginResults.some(({ result }) => result.state === "modified")) {
     await removeState(manifest.stateFile);
   }
 
@@ -70,11 +76,13 @@ await runCli("disable", async (options) => {
     details: [
       `mode: ${mode.id}`,
       `patch: ${patchResult.state}`,
-      `plugin: ${pluginResult.state}`,
+      `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
       `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,
-      pluginResult.state === "modified"
-        ? "el plugin instalado fue modificado manualmente y no se eliminó"
-        : "plugin revertido de forma segura",
+      pluginResults.some(({ result }) => result.state === "modified")
+        ? "alguno de los plugins instalados fue modificado manualmente y no se eliminó"
+        : pluginResults.some(({ result }) => result.state === "restored_backup")
+          ? "plugin previo restaurado de forma segura"
+          : "plugins revertidos de forma segura",
     ],
   };
 });

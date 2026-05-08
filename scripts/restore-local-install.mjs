@@ -76,13 +76,19 @@ await runCli("restore-local-install", async (options) => {
     backupPath: inspection.backupPath,
     dryRun: options.dryRun,
   });
-  const pluginResult = await removePlugin(
-    manifest.pluginSourcePath,
-    manifest.installedPluginPath,
-    state,
-    {
-      dryRun: options.dryRun,
-    },
+  const pluginResults = await Promise.all(
+    manifest.plugins.map(async (plugin) => {
+      const pluginState = state?.plugins?.find?.((item) => item.id === plugin.manifest.id) || state?.plugin;
+      const result = await removePlugin(
+        plugin.sourcePath,
+        plugin.installedPath,
+        pluginState ? { plugin: pluginState } : state,
+        {
+          dryRun: options.dryRun,
+        },
+      );
+      return { plugin, result };
+    }),
   );
 
   if (!options.dryRun) {
@@ -98,10 +104,10 @@ await runCli("restore-local-install", async (options) => {
       `install root: ${effectiveInstallRoot}`,
       `backup: ${inspection.backupPath}`,
       `result: ${result.state}`,
-      `plugin: ${pluginResult.state}`,
-      pluginResult.state === "modified"
-        ? "el plugin quedó instalado porque fue modificado manualmente"
-        : "plugin revertido de forma segura",
+      `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
+      pluginResults.some(({ result }) => result.state === "modified")
+        ? "alguno de los plugins quedó instalado porque fue modificado manualmente"
+        : "plugins revertidos de forma segura",
     ],
   };
 });
