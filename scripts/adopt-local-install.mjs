@@ -78,18 +78,23 @@ await runCli("adopt-local-install", async (options) => {
     );
   }
 
-  const plugin = await inspectPlugin(
-    manifest.pluginSourcePath,
-    manifest.installedPluginPath,
+  const plugins = await Promise.all(
+    manifest.plugins.map(async (plugin) => ({
+      plugin,
+      status: await inspectPlugin(
+        plugin.sourcePath,
+        plugin.installedPath,
+      ),
+    })),
   );
-  if (plugin.state !== "installed") {
+  if (plugins.some(({ status }) => status.state !== "installed")) {
     fail(
       {
         message:
-          "managed-local-install requiere que el plugin del addon ya esté instalado. Corré enable --opencode-root sobre el mismo checkout fuente antes de adoptar la instalación local.",
-        details: [`plugin: ${plugin.state}`],
+          "managed-local-install requiere que todos los plugins del addon ya estén instalados. Corré enable --opencode-root sobre el mismo checkout fuente antes de adoptar la instalación local.",
+        details: plugins.map(({ plugin, status }) => `${plugin.manifest.id}: ${status.state}`),
       },
-      plugin.state === "modified" ? 3 : 2,
+      plugins.some(({ status }) => status.state === "modified") ? 3 : 2,
     );
   }
 
@@ -193,13 +198,14 @@ await runCli("adopt-local-install", async (options) => {
       storageBackup,
       sourcePatchPath: sourceMode.patchPath,
     },
-    plugin: {
-      sourcePath: manifest.pluginSourcePath,
-      installedPath: manifest.installedPluginPath,
-      sourceHash: plugin.sourceHash,
-      installedHash: plugin.installedHash,
-      state: plugin.state,
-    },
+    plugins: plugins.map(({ plugin, status }) => ({
+      id: plugin.manifest.id,
+      sourcePath: plugin.sourcePath,
+      installedPath: plugin.installedPath,
+      sourceHash: status.sourceHash,
+      installedHash: status.installedHash,
+      state: status.state,
+    })),
   };
 
   if (!options.dryRun) {
@@ -215,7 +221,7 @@ await runCli("adopt-local-install", async (options) => {
       `install root: ${installRoot}`,
       `backup: ${backupPath}`,
       `checkout: ${sourceTarget.root}`,
-      `plugin: ${plugin.state}`,
+      `plugins: ${plugins.map(({ plugin, status }) => `${plugin.manifest.id}=${status.state}`).join(", ")}`,
       `bun: ${bunPath}`,
       `source runtime binary: ${runtimeBinary.binaryPath}`,
       `managed runtime binary: ${result.runtimeBinaryPath}`,
