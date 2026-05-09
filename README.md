@@ -12,6 +12,8 @@ Este add-on empaqueta la experiencia de background tasks que hoy permite:
 - inspeccionar tareas completadas o en curso
 - mantener la vista nativa de sesión y session switcher con proyección controlada por plugin
 
+Con la instalación completa del add-on, los agentes pasan a conocer y usar estas capacidades de forma autónoma porque el plugin server/runtime expone las tools y reglas necesarias, mientras el plugin TUI aporta la UX visible.
+
 ## Cómo está empaquetado
 
 Hoy el add-on se distribuye como:
@@ -55,7 +57,7 @@ En `managed-local-install`, el add-on:
 Hay dos caminos honestamente soportados:
 
 1. **Source checkout mode**
-   - instalás el plugin del add-on
+   - instalás los plugins del add-on
    - aplicás el patch versionado a un checkout fuente compatible
 
 2. **Managed local install mode**
@@ -90,7 +92,9 @@ Garantías principales del lifecycle actual:
 
 ## Archivos administrados por el add-on
 
-- plugin: `~/.config/opencode/plugins/background-agents-tui/index.ts`
+- plugins:
+  - `~/.config/opencode/plugins/background-agents.ts`
+  - `~/.config/opencode/plugins/background-agents-tui/index.ts`
 - state: `~/.local/state/opencode-addons/opencode-background-tasks/state.json`
 - marker de adopción: `~/.opencode/.opencode-background-addon.json`
 - runtime administrado: `~/.opencode/bin/opencode-managed-runtime`

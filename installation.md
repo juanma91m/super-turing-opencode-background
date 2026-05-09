@@ -58,6 +58,8 @@ Esto hace dos cosas:
   - `background-agents-tui/index.ts`
 - aplica el patch versionado del host/core sobre el checkout fuente compatible
 
+Con esa instalación completa, los agentes ya pasan a conocer las tools async/background del addon sin necesitar una skill de acoplamiento extra. El plugin server/runtime (`background-agents.ts`) expone las tools y reglas, y el plugin TUI (`background-agents-tui`) aporta la UX visible.
+
 ### 3. Validar el flujo mínimo
 
 ```bash

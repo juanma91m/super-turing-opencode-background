@@ -168,6 +168,7 @@ interface SameSessionTaskItem {
   assistantMessageID?: string
   detachedAt?: number
 }
+
 const MAX_RUN_TIME_MS = 15 * 60 * 1000
 const RECENT_COMPLETED_LIMIT = 10
 const MAX_DELEGATION_CALLER_DEPTH = 1
@@ -176,6 +177,8 @@ const ISOLATED_WRITE_CONCURRENCY_LIMIT = 1
 
 const READ_ONLY_DELEGATION_MATRIX: Record<string, string[]> = {
   "master-dev": ["backend-java-developer", "frontend-web-developer", "reviewer", "code-inspector", "explorer", "ui-web-designer"],
+  plan: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
+  planner: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
   "frontend-web-developer": ["explorer", "code-inspector"],
   "backend-java-developer": ["explorer", "code-inspector"],
   "ui-web-designer": ["explorer"],
@@ -273,7 +276,6 @@ function isPermissionDenied(entry: PermissionEntry | undefined): boolean {
   return false
 }
 
-<<<<<<< HEAD
 function normalizePositiveInt(value: unknown): number | undefined {
   const num = Number(value)
   return Number.isInteger(num) && num > 0 ? num : undefined
@@ -352,8 +354,6 @@ function collectSameSessionLineage(
   })
 }
 
-=======
->>>>>>> background-from-super-turing-opencode
 async function isReadOnlyAgent(client: OpencodeClient, agentName: string): Promise<boolean> {
   const config = await client.config.get()
   const configData = (config?.data ?? {}) as {
@@ -876,7 +876,6 @@ class DelegationManager {
     throw new Error(`Delegation "${id}" not found.\n\nUse delegation_list() to see available delegations.`)
   }
 
-<<<<<<< HEAD
   private async readKvState(): Promise<Record<string, unknown>> {
     try {
       const raw = await fs.readFile(kvStatePath(), "utf8")
@@ -980,8 +979,6 @@ class DelegationManager {
     ].join("\n")
   }
 
-=======
->>>>>>> background-from-super-turing-opencode
   private async getSessionMessages(sessionID: string): Promise<Array<{ info?: any; parts?: Part[] }>> {
     const messages = await this.client.session.messages({ path: { id: sessionID } })
     return (messages?.data ?? []) as Array<{ info?: any; parts?: Part[] }>
@@ -2515,7 +2512,6 @@ Use sparingly. Do NOT use this as a polling loop while waiting for completion no
   })
 }
 
-<<<<<<< HEAD
 function createSameSessionTaskList(manager: DelegationManager) {
   return tool({
     description: `List same-session background tasks for the current logical session.
@@ -2543,8 +2539,6 @@ Use this when the user asks to inspect what happened inside sidebar items like #
   })
 }
 
-=======
->>>>>>> background-from-super-turing-opencode
 const DELEGATION_RULES = `<task-notification>
 <delegation-system>
 
@@ -2553,11 +2547,8 @@ const DELEGATION_RULES = `<task-notification>
 You have tools for parallel background work:
 - \`delegate(prompt, agent)\` - Launch a background task and get an ID immediately
 - \`delegate_isolated(prompt, agent, name?)\` - Launch write-capable work in an isolated worktree for manual review
-<<<<<<< HEAD
 - \`same_session_task_list()\` - List same-session background tasks visible in the current logical session
 - \`same_session_task_read({ task })\` - Inspect one same-session background task by number or id
-=======
->>>>>>> background-from-super-turing-opencode
 - \`delegation_open(id)\` - Jump into the child session when it exists
 - \`delegation_read(id)\` - Retrieve the full persisted result
 - \`delegation_tail(id)\` - Retrieve only new incremental output/status from a running delegation
@@ -2610,13 +2601,10 @@ Do NOT assume the delegated agent can infer hidden context from the parent conve
 3. Receive a compact notification with ID and status only
 4. Use \`delegation_open(id)\` to jump into the child session, \`delegation_tail(id)\` for incremental progress, and \`delegation_read(id)\` when you need the full result
 
-<<<<<<< HEAD
 For same-session background runs identified by sidebar numbers like #1, #2 or #3:
 - use \`same_session_task_list()\` to list them,
 - use \`same_session_task_read({ task: "3" })\` to inspect one of them.
 
-=======
->>>>>>> background-from-super-turing-opencode
 For \`delegate_isolated\`, wait for \`review_pending\`, then inspect the persisted summary, worktree path, changed files, and \`diff.patch\`.
 After review:
 - use \`delegation_accept(id)\` to keep the reviewed worktree for manual integration later,
@@ -2660,11 +2648,8 @@ export const BackgroundAgents: Plugin = async (ctx) => {
   return {
     tool: {
       delegate: createDelegate(manager),
-<<<<<<< HEAD
       same_session_task_list: createSameSessionTaskList(manager),
       same_session_task_read: createSameSessionTaskRead(manager),
-=======
->>>>>>> background-from-super-turing-opencode
       delegation_open: createDelegationOpen(manager),
       delegation_read: createDelegationRead(manager),
       delegation_tail: createDelegationTail(manager),
@@ -2700,18 +2685,12 @@ export const BackgroundAgents: Plugin = async (ctx) => {
         }))
 
       const completed = await manager.getRecentCompletedDelegations(input.sessionID)
-<<<<<<< HEAD
       const sameSession = await manager.describeSameSessionTasks(input.sessionID)
       if (running.length === 0 && completed.length === 0 && !sameSession) return
 
       if (running.length > 0 || completed.length > 0)
         output.context.push(formatDelegationContext(running, completed))
       if (sameSession) output.context.push(sameSession)
-=======
-      if (running.length === 0 && completed.length === 0) return
-
-      output.context.push(formatDelegationContext(running, completed))
->>>>>>> background-from-super-turing-opencode
     },
 
     event: async ({ event }: { event: Event }): Promise<void> => {
