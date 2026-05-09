@@ -8,6 +8,7 @@ import { sha256File } from "../lib/hash.mjs";
 import { ensureCompatibleMode } from "../lib/compat.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 await runCli("enable", async (options) => {
   const manifest = await loadManifest();
@@ -90,6 +91,16 @@ await runCli("enable", async (options) => {
           dryRun: options.dryRun,
         })
       : { changed: false, state: "not_required" };
+    if (!options.dryRun) {
+      const tuiResult = spawnSync(
+        "python3",
+        [path.join(path.dirname(new URL(import.meta.url).pathname), "ensure_tui_plugin.py"), "ensure", path.join(process.env.HOME ?? "", ".config", "opencode")],
+        { encoding: "utf8" },
+      );
+      if (tuiResult.status !== 0) {
+        throw new Error(tuiResult.stderr.trim() || "No se pudo asegurar tui.json del addon background");
+      }
+    }
     const state = {
       addonId: manifest.addon.id,
       addonVersion: manifest.addon.version,
@@ -137,6 +148,7 @@ await runCli("enable", async (options) => {
         `patch: ${patchResult.state}`,
         `version: ${target.version}`,
         `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : "dirty (dry-run allowed)") : "not_required"}`,
+        `tui: ensured`,
       ],
     };
   } catch (error) {

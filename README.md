@@ -14,11 +14,12 @@ Este add-on empaqueta la experiencia de background tasks que hoy permite:
 
 ## Cómo está empaquetado
 
-Hoy el add-on no depende de cambios en runtime/server. Se distribuye como:
+Hoy el add-on se distribuye como:
 
-- un **plugin TUI** (`background-agents-tui`)
-- un **patch versionado del host/core** para OpenCode `1.14.39`
-- un lifecycle propio para instalar, revalidar, adoptar una instalación local y restaurarla
+- un **plugin server/runtime** (`background-agents.ts`) para delegaciones async,
+- un **plugin TUI** (`background-agents-tui`) para la UX visible en foreground,
+- un **patch versionado del host/core** para OpenCode `1.14.39`,
+- y un lifecycle propio para instalar, revalidar, adoptar una instalación local y restaurarla.
 
 En `managed-local-install`, el add-on:
 
@@ -112,12 +113,24 @@ node ./scripts/restore-local-install.mjs
 
 ```text
 manifest/     # metadata del add-on y compatibilidad por versión
-plugin/       # plugin empaquetado dentro del add-on
+plugin/       # plugins server/TUI empaquetados dentro del add-on
 patches/      # patch versionado del host/core
 lib/          # utilidades de detección, estado, patch, plugin y compat
 scripts/      # lifecycle: status, enable, disable, reapply, smoke
 docs/         # validación, seguridad y notas complementarias
+skills/       # skills asociadas al workflow async/background
 ```
+
+## Assets migrados desde el stack base
+
+Esta rama también concentra el source-of-truth de la capa async/background que antes vivía en `super-turing-opencode`, incluyendo:
+
+- `plugin/background-agents.ts`
+- `plugin/background-agents-tui/index.ts`
+- `PLAYBOOK-ASYNC.md`
+- `skills/delegacion-async-opencode/SKILL.md`
+
+La idea es que esta rama quede lista para luego mergearse tanto con `main` como con `sync-super-turing-background-clean`.
 
 ## Limitaciones conocidas
 

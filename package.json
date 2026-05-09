@@ -1,6 +1,6 @@
 {
   "name": "opencode-background-tasks-addon",
-  "description": "Alpha scaffold for the OpenCode background tasks addon",
+  "description": "Background and async delegation add-on for OpenCode",
   "private": true,
   "type": "module",
   "version": "0.1.0-alpha.1",

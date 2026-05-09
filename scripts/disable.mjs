@@ -6,6 +6,8 @@ import { removePlugin } from "../lib/plugin.mjs";
 import { revertPatch } from "../lib/patch.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
 import { ensureCompatibleMode } from "../lib/compat.mjs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 await runCli("disable", async (options) => {
   const manifest = await loadManifest();
@@ -66,6 +68,17 @@ await runCli("disable", async (options) => {
   );
 
   if (!options.dryRun && !pluginResults.some(({ result }) => result.state === "modified")) {
+    const tuiResult = spawnSync(
+      "python3",
+      [path.join(path.dirname(new URL(import.meta.url).pathname), "ensure_tui_plugin.py"), "remove", path.join(process.env.HOME ?? "", ".config", "opencode")],
+      { encoding: "utf8" },
+    );
+    if (tuiResult.status !== 0) {
+      fail({ message: tuiResult.stderr.trim() || "No se pudo limpiar tui.json del addon background" }, 1);
+    }
+  }
+
+  if (!options.dryRun && !pluginResults.some(({ result }) => result.state === "modified")) {
     await removeState(manifest.stateFile);
   }
 
@@ -83,6 +96,9 @@ await runCli("disable", async (options) => {
         : pluginResults.some(({ result }) => result.state === "restored_backup")
           ? "plugin previo restaurado de forma segura"
           : "plugins revertidos de forma segura",
+      pluginResults.some(({ result }) => result.state === "modified")
+        ? "tui.json no se tocó porque todavía hay plugins no gestionables"
+        : "tui.json revertido de forma segura",
     ],
   };
 });
