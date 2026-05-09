@@ -53,7 +53,9 @@ node ./scripts/enable.mjs --opencode-root /ruta/al/opencode-checkout
 
 Esto hace dos cosas:
 
-- instala el plugin del add-on en `~/.config/opencode/plugins/background-agents-tui/`
+- instala los plugins del add-on en `~/.config/opencode/plugins/`
+  - `background-agents.ts`
+  - `background-agents-tui/index.ts`
 - aplica el patch versionado del host/core sobre el checkout fuente compatible
 
 ### 3. Validar el flujo mínimo

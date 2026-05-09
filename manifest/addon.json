@@ -5,12 +5,23 @@
   "version": "0.1.0-alpha.1",
   "channel": "alpha",
   "repositoryReady": true,
-  "plugin": {
-    "id": "background-agents-tui",
-    "source": "plugin/background-agents-tui/index.ts",
-    "installDirName": "background-agents-tui",
-    "installFile": "index.ts"
-  },
+  "plugins": [
+    {
+      "id": "background-agents",
+      "source": "plugin/background-agents.ts",
+      "installDirName": "",
+      "installFile": "background-agents.ts"
+    },
+    {
+      "id": "background-agents-tui",
+      "source": "plugin/background-agents-tui/index.ts",
+      "installDirName": "background-agents-tui",
+      "installFile": "index.ts",
+      "compatibleInstalledHashes": [
+        "2104f101da20e1ff7fd0711ebd87bbd31260bc0198243c748214fc9946d2b500"
+      ]
+    }
+  ],
   "patches": {
     "opencode": {
       "1.14.39": "patches/opencode/1.14.39.patch"
