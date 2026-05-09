@@ -1,5 +1,7 @@
 # OpenCode Background Tasks Add-on
 
+Portable OpenCode addon for async same-session background tasks, extending `super-turing-opencode` with foreground/background switching, task inspection, and managed local install support.
+
 Alpha add-on para OpenCode que lleva la UX de **background tasks same-session** a la TUI sin mezclar el producto con `super-turing-opencode`.
 
 ## Qué agrega
