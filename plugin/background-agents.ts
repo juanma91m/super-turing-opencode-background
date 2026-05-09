@@ -141,6 +141,34 @@ interface DelegationListItem {
   lastMessage?: string
 }
 
+interface SameSessionTaskRef {
+  id: string
+  source?: string
+  sequence?: number
+  title?: string
+  bgTaskToken?: string
+  parentUserMessageID?: string
+  assistantMessageID?: string
+  createdAt?: number
+  detachedAt?: number
+}
+
+interface SameSessionBackgroundState {
+  backgroundModeEnabled?: boolean
+  trackedTaskRefs?: SameSessionTaskRef[]
+  threadRootSessionID?: string
+}
+
+interface SameSessionTaskItem {
+  id: string
+  sessionID: string
+  sequence?: number
+  title: string
+  parentUserMessageID?: string
+  assistantMessageID?: string
+  detachedAt?: number
+}
+
 const MAX_RUN_TIME_MS = 15 * 60 * 1000
 const RECENT_COMPLETED_LIMIT = 10
 const MAX_DELEGATION_CALLER_DEPTH = 1
@@ -149,6 +177,8 @@ const ISOLATED_WRITE_CONCURRENCY_LIMIT = 1
 
 const READ_ONLY_DELEGATION_MATRIX: Record<string, string[]> = {
   "master-dev": ["backend-java-developer", "frontend-web-developer", "reviewer", "code-inspector", "explorer", "ui-web-designer"],
+  plan: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
+  planner: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
   "frontend-web-developer": ["explorer", "code-inspector"],
   "backend-java-developer": ["explorer", "code-inspector"],
   "ui-web-designer": ["explorer"],
@@ -244,6 +274,84 @@ function isPermissionDenied(entry: PermissionEntry | undefined): boolean {
   if (entry === "deny") return true
   if (entry && typeof entry === "object" && entry["*"] === "deny") return true
   return false
+}
+
+function normalizePositiveInt(value: unknown): number | undefined {
+  const num = Number(value)
+  return Number.isInteger(num) && num > 0 ? num : undefined
+}
+
+function kvStatePath(): string {
+  return path.join(os.homedir(), ".local", "state", "opencode", "kv.json")
+}
+
+function normalizeSameSessionBackgroundState(value: unknown): SameSessionBackgroundState {
+  const input = value && typeof value === "object" ? (value as SameSessionBackgroundState) : {}
+  const trackedTaskRefs = Array.isArray(input.trackedTaskRefs)
+    ? input.trackedTaskRefs
+        .filter((item): item is SameSessionTaskRef => Boolean(item && typeof item === "object" && typeof item.id === "string"))
+        .map((item) => ({
+          id: item.id,
+          source: item.source,
+          sequence: normalizePositiveInt(item.sequence),
+          title: item.title,
+          bgTaskToken: item.bgTaskToken,
+          parentUserMessageID: item.parentUserMessageID,
+          assistantMessageID: item.assistantMessageID,
+          createdAt: Number(item.createdAt || 0) || undefined,
+          detachedAt: Number(item.detachedAt || 0) || undefined,
+        }))
+    : []
+
+  return {
+    backgroundModeEnabled: Boolean(input.backgroundModeEnabled),
+    trackedTaskRefs,
+    threadRootSessionID: typeof input.threadRootSessionID === "string" && input.threadRootSessionID.trim() ? input.threadRootSessionID : undefined,
+  }
+}
+
+function compareSameSessionTaskItems(a: SameSessionTaskItem, b: SameSessionTaskItem): number {
+  const aSequence = normalizePositiveInt(a.sequence)
+  const bSequence = normalizePositiveInt(b.sequence)
+  if (aSequence !== undefined || bSequence !== undefined) {
+    if (aSequence === undefined) return 1
+    if (bSequence === undefined) return -1
+    if (aSequence !== bSequence) return bSequence - aSequence
+  }
+
+  const aDetached = Number(a.detachedAt || 0)
+  const bDetached = Number(b.detachedAt || 0)
+  if (aDetached !== bDetached) return bDetached - aDetached
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+function collectSameSessionLineage(
+  messages: Array<{ info?: any; parts?: Part[] }>,
+  rootUserMessageID?: string,
+): Array<{ info?: any; parts?: Part[] }> {
+  if (!rootUserMessageID) return messages
+  const allowed = new Set<string>([rootUserMessageID])
+  let changed = true
+
+  while (changed) {
+    changed = false
+    for (const message of messages) {
+      const id = message.info?.id as string | undefined
+      const parentID = message.info?.parentID as string | undefined
+      if (!id) continue
+      if (allowed.has(id) || (parentID && allowed.has(parentID))) {
+        if (!allowed.has(id)) {
+          allowed.add(id)
+          changed = true
+        }
+      }
+    }
+  }
+
+  return messages.filter((message) => {
+    const id = message.info?.id as string | undefined
+    return Boolean(id && allowed.has(id))
+  })
 }
 
 async function isReadOnlyAgent(client: OpencodeClient, agentName: string): Promise<boolean> {
@@ -766,6 +874,109 @@ class DelegationManager {
     if (persisted) return persisted
 
     throw new Error(`Delegation "${id}" not found.\n\nUse delegation_list() to see available delegations.`)
+  }
+
+  private async readKvState(): Promise<Record<string, unknown>> {
+    try {
+      const raw = await fs.readFile(kvStatePath(), "utf8")
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
+    } catch {
+      return {}
+    }
+  }
+
+  private async listSameSessionTasks(sessionID: string): Promise<SameSessionTaskItem[]> {
+    const kv = await this.readKvState()
+    const statePrefix = "background-agents-tui:session:"
+    const currentState = normalizeSameSessionBackgroundState(kv[`${statePrefix}${sessionID}`])
+    const rootSessionID = currentState.threadRootSessionID || sessionID
+
+    const tasks = Object.entries(kv)
+      .filter(([key]) => key.startsWith(statePrefix))
+      .flatMap(([key, value]) => {
+        const owningSessionID = key.slice(statePrefix.length)
+        const state = normalizeSameSessionBackgroundState(value)
+        if (owningSessionID !== rootSessionID && state.threadRootSessionID !== rootSessionID) return []
+        return (state.trackedTaskRefs ?? []).map((ref) => ({
+          id: ref.id,
+          sessionID: owningSessionID,
+          sequence: normalizePositiveInt(ref.sequence),
+          title: ref.title || "Tarea background de la misma sesión",
+          parentUserMessageID: ref.parentUserMessageID,
+          assistantMessageID: ref.assistantMessageID,
+          detachedAt: ref.detachedAt,
+        }))
+      })
+      .sort(compareSameSessionTaskItems)
+
+    const unique = new Map<string, SameSessionTaskItem>()
+    for (const task of tasks) unique.set(`${task.sessionID}:${task.id}`, task)
+    return Array.from(unique.values())
+  }
+
+  private collectSameSessionTaskMessages(
+    messages: Array<{ info?: any; parts?: Part[] }>,
+    task: SameSessionTaskItem,
+  ): Array<{ info?: any; parts?: Part[] }> {
+    if (!task.parentUserMessageID) return messages
+    const allowed = new Set<string>([task.parentUserMessageID])
+    const selected: Array<{ info?: any; parts?: Part[] }> = []
+
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const message of messages) {
+        const id = message.info?.id as string | undefined
+        const parentID = message.info?.parentID as string | undefined
+        if (!id) continue
+        if (allowed.has(id) || (parentID && allowed.has(parentID))) {
+          if (!allowed.has(id)) {
+            allowed.add(id)
+            changed = true
+          }
+        }
+      }
+    }
+
+    for (const message of messages) {
+      const id = message.info?.id as string | undefined
+      if (id && allowed.has(id)) selected.push(message)
+    }
+    return selected
+  }
+
+  async describeSameSessionTasks(sessionID: string): Promise<string | undefined> {
+    const tasks = await this.listSameSessionTasks(sessionID)
+    if (tasks.length === 0) return undefined
+    const lines = tasks.map((task) => `- #${task.sequence ?? "?"} — ${summarize(task.title, 120)}`)
+    return ["<same-session-task-context>", "## Same-Session Background Tasks", "", ...lines, "", "Use same_session_task_read({ task: \"<number>\" }) to inspect one of these tasks.", "</same-session-task-context>"].join("\n")
+  }
+
+  async readSameSessionTask(sessionID: string, taskRef: string): Promise<string> {
+    const tasks = await this.listSameSessionTasks(sessionID)
+    if (tasks.length === 0) return "No same-session background tasks found for this session."
+
+    const normalizedRef = taskRef.trim().replace(/^#/, "")
+    const numeric = normalizePositiveInt(normalizedRef)
+    const task = tasks.find((item) => (numeric !== undefined ? item.sequence === numeric : item.id === taskRef || item.id === normalizedRef))
+    if (!task) {
+      const known = tasks.map((item) => `#${item.sequence ?? "?"} — ${item.title}`).join("\n")
+      return `No same-session background task matched \"${taskRef}\".\n\nAvailable tasks:\n${known}`
+    }
+
+    const messages = await this.getSessionMessages(task.sessionID)
+    const selected = this.collectSameSessionTaskMessages(messages, task)
+    const rendered = this.renderMessages(selected)
+    return [
+      `## Same-session task #${task.sequence ?? "?"}`,
+      ``,
+      `**Session:** ${task.sessionID}`,
+      `**Task ID:** ${task.id}`,
+      `**Title:** ${task.title}`,
+      ``,
+      rendered || "(No messages found for this task)",
+    ].join("\n")
   }
 
   private async getSessionMessages(sessionID: string): Promise<Array<{ info?: any; parts?: Part[] }>> {
@@ -2301,6 +2512,33 @@ Use sparingly. Do NOT use this as a polling loop while waiting for completion no
   })
 }
 
+function createSameSessionTaskList(manager: DelegationManager) {
+  return tool({
+    description: `List same-session background tasks for the current logical session.
+Use this when the user refers to sidebar items like #1, #2 or #3 that were sent to background from the same session.`,
+    args: {},
+    async execute(_args: Record<string, never>, toolCtx: ToolContext): Promise<string> {
+      if (!toolCtx?.sessionID) return "❌ same_session_task_list requires sessionID. This is a system error."
+      const summary = await manager.describeSameSessionTasks(toolCtx.sessionID)
+      return summary ?? "No same-session background tasks found for this session."
+    },
+  })
+}
+
+function createSameSessionTaskRead(manager: DelegationManager) {
+  return tool({
+    description: `Read one same-session background task by sequence number or task id.
+Use this when the user asks to inspect what happened inside sidebar items like #1, #2 or #3.`,
+    args: {
+      task: tool.schema.string().describe('Task sequence or id, for example "3" or "#3".'),
+    },
+    async execute(args: { task: string }, toolCtx: ToolContext): Promise<string> {
+      if (!toolCtx?.sessionID) return "❌ same_session_task_read requires sessionID. This is a system error."
+      return manager.readSameSessionTask(toolCtx.sessionID, args.task)
+    },
+  })
+}
+
 const DELEGATION_RULES = `<task-notification>
 <delegation-system>
 
@@ -2309,6 +2547,8 @@ const DELEGATION_RULES = `<task-notification>
 You have tools for parallel background work:
 - \`delegate(prompt, agent)\` - Launch a background task and get an ID immediately
 - \`delegate_isolated(prompt, agent, name?)\` - Launch write-capable work in an isolated worktree for manual review
+- \`same_session_task_list()\` - List same-session background tasks visible in the current logical session
+- \`same_session_task_read({ task })\` - Inspect one same-session background task by number or id
 - \`delegation_open(id)\` - Jump into the child session when it exists
 - \`delegation_read(id)\` - Retrieve the full persisted result
 - \`delegation_tail(id)\` - Retrieve only new incremental output/status from a running delegation
@@ -2361,6 +2601,10 @@ Do NOT assume the delegated agent can infer hidden context from the parent conve
 3. Receive a compact notification with ID and status only
 4. Use \`delegation_open(id)\` to jump into the child session, \`delegation_tail(id)\` for incremental progress, and \`delegation_read(id)\` when you need the full result
 
+For same-session background runs identified by sidebar numbers like #1, #2 or #3:
+- use \`same_session_task_list()\` to list them,
+- use \`same_session_task_read({ task: "3" })\` to inspect one of them.
+
 For \`delegate_isolated\`, wait for \`review_pending\`, then inspect the persisted summary, worktree path, changed files, and \`diff.patch\`.
 After review:
 - use \`delegation_accept(id)\` to keep the reviewed worktree for manual integration later,
@@ -2404,6 +2648,8 @@ export const BackgroundAgents: Plugin = async (ctx) => {
   return {
     tool: {
       delegate: createDelegate(manager),
+      same_session_task_list: createSameSessionTaskList(manager),
+      same_session_task_read: createSameSessionTaskRead(manager),
       delegation_open: createDelegationOpen(manager),
       delegation_read: createDelegationRead(manager),
       delegation_tail: createDelegationTail(manager),
@@ -2439,9 +2685,12 @@ export const BackgroundAgents: Plugin = async (ctx) => {
         }))
 
       const completed = await manager.getRecentCompletedDelegations(input.sessionID)
-      if (running.length === 0 && completed.length === 0) return
+      const sameSession = await manager.describeSameSessionTasks(input.sessionID)
+      if (running.length === 0 && completed.length === 0 && !sameSession) return
 
-      output.context.push(formatDelegationContext(running, completed))
+      if (running.length > 0 || completed.length > 0)
+        output.context.push(formatDelegationContext(running, completed))
+      if (sameSession) output.context.push(sameSession)
     },
 
     event: async ({ event }: { event: Event }): Promise<void> => {
