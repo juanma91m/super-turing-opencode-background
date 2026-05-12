@@ -19,6 +19,7 @@ type DelegationStatus =
   | "pending"
   | "running"
   | "complete"
+  | "interrupted"
   | "error"
   | "cancelled"
   | "timeout"
@@ -26,7 +27,13 @@ type DelegationStatus =
   | "accepted"
   | "discarded"
   | "applied";
-type SessionRunStatus = "queued" | "running" | "done" | "error" | "needs_input";
+type SessionRunStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "interrupted"
+  | "error"
+  | "needs_input";
 type TaskSource = "delegation" | "session-run";
 
 interface PersistedDelegationMeta {
@@ -41,6 +48,8 @@ interface PersistedDelegationMeta {
   error?: string | null;
   title?: string | null;
   description?: string | null;
+  promptPreview?: string | null;
+  artifactsDir?: string | null;
 }
 
 interface SessionRunRef {
@@ -83,10 +92,12 @@ interface TaskRecord {
   id: string;
   source: TaskSource;
   sequence?: number;
+  displaySequence?: number;
   status: string;
   mode: string;
   title?: string;
   description?: string;
+  promptPreview?: string;
   agent?: string;
   sessionID?: string;
   error?: string;
@@ -94,6 +105,7 @@ interface TaskRecord {
   startedAt?: string;
   completedAt?: string;
   updatedAt?: string;
+  artifactsDir?: string;
   parentUserMessageID?: string;
   assistantMessageID?: string;
   currentSession?: boolean;
@@ -126,6 +138,7 @@ type TaskDialogValue =
 const POLL_INTERVAL_MS = 2500;
 const TOASTABLE_STATUSES = new Set([
   "complete",
+  "interrupted",
   "done",
   "error",
   "review_pending",
@@ -218,6 +231,8 @@ function formatStatusLabel(status: string): string {
     case "complete":
     case "done":
       return "completada";
+    case "interrupted":
+      return "interrumpida";
     case "review_pending":
       return "lista para revisión";
     case "accepted":
@@ -254,6 +269,8 @@ function getStatusPresentation(status: string): {
     case "complete":
     case "done":
       return { icon: "🟢", label, variant: "success" };
+    case "interrupted":
+      return { icon: "🔴", label, variant: "error" };
     case "review_pending":
       return { icon: "🟣", label, variant: "success" };
     case "accepted":
@@ -338,12 +355,14 @@ function displayTaskTitle(item: TaskRecord, icon: string): string {
       ? "Delegación background"
       : "Tarea en background";
   const summary =
-    summarize(normalizeDisplaySummary(item.title) || fallback, 25) || fallback;
-  const sequence =
-    item.source === "session-run"
-      ? normalizePositiveInt(item.sequence)
-      : undefined;
-  return sequence ? `${icon} #${sequence} — ${summary}` : `${icon} ${summary}`;
+    summarize(
+      normalizeDisplaySummary(
+        item.title || item.description || item.promptPreview,
+      ) || fallback,
+      25,
+    ) || fallback;
+  const sequence = normalizePositiveInt(item.displaySequence) || normalizePositiveInt(item.sequence);
+  return sequence ? `${icon} #${sequence} - ${summary}` : `${icon} ${summary}`;
 }
 
 function toIsoTime(value?: number | string): string | undefined {
@@ -554,10 +573,23 @@ function makeSessionRunDescription(
       return `${base} · necesita input o permiso del usuario`;
     case "done":
       return `${base} · completada`;
+    case "interrupted":
+      return `${base} · interrumpida`;
     case "error":
     default:
       return `${base} · falló`;
   }
+}
+
+async function readDelegationPersistedExcerpt(item: TaskRecord): Promise<string | undefined> {
+  if (!item.artifactsDir) return summarize(item.description || item.promptPreview || item.title, 600);
+  try {
+    const result = (await fs.readFile(path.join(item.artifactsDir, "result.md"), "utf8")).trim();
+    if (result) return summarize(result, 600);
+  } catch {
+    // ignore missing persisted result
+  }
+  return summarize(item.description || item.promptPreview || item.title, 600);
 }
 
 function countItems(items: TaskRecord[]): Snapshot["counts"] {
@@ -575,7 +607,11 @@ function countItems(items: TaskRecord[]): Snapshot["counts"] {
     else if (item.status === "running") counts.running += 1;
     else if (item.status === "review_pending") counts.review_pending += 1;
     else if (item.status === "needs_input") counts.needs_input += 1;
-    else if (item.status === "error" || item.status === "timeout")
+    else if (
+      item.status === "error" ||
+      item.status === "timeout" ||
+      item.status === "interrupted"
+    )
       counts.error += 1;
     else if (
       [
@@ -637,14 +673,20 @@ async function readProjectDelegations(
             mode: meta.mode,
             sessionID: meta.sessionID ?? undefined,
             agent: meta.agent,
-            title: meta.title ?? undefined,
-            description: meta.description ?? undefined,
+            title:
+              meta.title ??
+              meta.description ??
+              meta.promptPreview ??
+              undefined,
+            description: meta.description ?? meta.promptPreview ?? undefined,
+            promptPreview: meta.promptPreview ?? undefined,
             error: meta.error ?? undefined,
             queuedAt: meta.queuedAt ?? undefined,
             startedAt: meta.startedAt ?? undefined,
             completedAt: meta.completedAt ?? undefined,
             updatedAt:
               meta.completedAt ?? meta.startedAt ?? meta.queuedAt ?? undefined,
+            artifactsDir: meta.artifactsDir ?? undefined,
           });
         } catch {
           // ignore malformed or transient files
@@ -699,7 +741,9 @@ function buildSessionRunStatus(item: {
   assistant?: SessionMessageRecord;
   hasPendingInput: boolean;
 }): SessionRunStatus {
-  if (item.assistant?.info?.error) return "error";
+  const error = (item.assistant?.info as { error?: { name?: string } } | undefined)?.error;
+  if (error?.name === "MessageAbortedError") return "interrupted";
+  if (error) return "error";
   if (!item.assistant) return "queued";
   if ((item.assistant.info as any)?.time?.completed) return "done";
   if (item.hasPendingInput) return "needs_input";
@@ -1428,8 +1472,13 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     if (!routeSessionID) return;
     const inspection = loadInspectionState();
     const sessionInfo = await fetchSessionInfo(api, routeSessionID);
+    const delegationChildWithoutInspection =
+      !inspection &&
+      !loadSessionState(routeSessionID).threadRootSessionID &&
+      /^(Delegation|Isolated delegation):\s/.test(sessionInfo?.title || "");
     const shellSessionID =
       inspection?.returnSessionID ||
+      (delegationChildWithoutInspection ? sessionInfo?.parentID : undefined) ||
       resolveShellSessionID(routeSessionID) ||
       sessionInfo?.parentID ||
       routeSessionID;
@@ -1611,10 +1660,9 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       const completedAt = toIsoTime(
         (assistantRecord?.info as any)?.time?.completed,
       );
-      const error =
-        assistantRecord && (assistantRecord.info as any).error
-          ? JSON.stringify((assistantRecord.info as any).error)
-          : undefined;
+      const error = (assistantRecord?.info as { error?: unknown } | undefined)?.error
+        ? JSON.stringify((assistantRecord.info as { error?: unknown }).error)
+        : undefined;
 
       return {
         id: ref.id,
@@ -1706,9 +1754,15 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       delegationParentSessionIDs,
     );
 
-    const items = [...sessionItems, ...delegationSnapshot.items].sort((a, b) =>
-      sortKey(b).localeCompare(sortKey(a)),
-    );
+    const chronologicallyOrdered = [...sessionItems, ...delegationSnapshot.items]
+      .sort(compareTaskDialogOrder)
+      .map((item, index) => ({
+        ...item,
+        displaySequence: index + 1,
+      }));
+    const items = chronologicallyOrdered
+      .slice()
+      .sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
     const next: Snapshot = {
       projectId: delegationSnapshot.projectId,
       items,
@@ -1770,21 +1824,28 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     return refreshSnapshotInFlight;
   };
 
-  const openFallbackAlert = (item: TaskRecord) => {
+  const openFallbackAlert = async (item: TaskRecord) => {
     const message =
       item.source === "delegation"
-        ? `Usá delegation_read("${item.id}") desde la sesión actual para inspeccionar el resultado persistido.`
-        : item.status === "needs_input"
-          ? "Esta tarea de la misma sesión está esperando input del usuario o un permiso en la sesión actual."
-          : "Esta tarea background pertenece a la sesión actual; inspeccioná la conversación para ver el detalle.";
+        ? (() => readDelegationPersistedExcerpt(item).then((excerpt) =>
+            excerpt
+              ? `La sesión hija ya no está disponible, pero quedó resultado persistido.\n\n${excerpt}\n\nUsá delegation_read("${item.id}") desde la sesión actual si necesitás el detalle completo.`
+              : `Usá delegation_read("${item.id}") desde la sesión actual para inspeccionar el resultado persistido.`,
+          ))()
+        : Promise.resolve(
+            item.status === "needs_input"
+              ? "Esta tarea de la misma sesión está esperando input del usuario o un permiso en la sesión actual."
+              : "Esta tarea background pertenece a la sesión actual; inspeccioná la conversación para ver el detalle.",
+          );
+    const resolvedMessage = await message;
 
     api.ui.dialog.replace(() =>
       api.ui.DialogAlert({
         title:
           item.source === "delegation"
-            ? "No hay una sesión hija activa"
+            ? "La sesión hija ya no está disponible"
             : "Tarea de la sesión actual",
-        message,
+        message: resolvedMessage,
       }),
     );
   };
@@ -1796,7 +1857,12 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
 
     if (item.source === "delegation") {
       if (!item.sessionID) {
-        openFallbackAlert(item);
+        await openFallbackAlert(item);
+        return;
+      }
+      const selectedInfo = await fetchSessionInfo(api, item.sessionID);
+      if (!selectedInfo?.id) {
+        await openFallbackAlert(item);
         return;
       }
       const hostSessionID = resolveInspectionHostSessionID(
@@ -1817,7 +1883,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     }
 
     if (!item.sessionID) {
-      openFallbackAlert(item);
+      await openFallbackAlert(item);
       return;
     }
 

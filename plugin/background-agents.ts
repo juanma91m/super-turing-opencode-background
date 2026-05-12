@@ -23,7 +23,7 @@ type Part = any
 
 type PermissionEntry = "ask" | "allow" | "deny" | Record<string, "ask" | "allow" | "deny">
 
-type DelegationStatus = "pending" | "running" | "complete" | "error" | "cancelled" | "timeout"
+type DelegationStatus = "pending" | "running" | "complete" | "interrupted" | "error" | "cancelled" | "timeout"
 type IsolatedDelegationStatus = DelegationStatus | "review_pending" | "accepted" | "discarded" | "applied"
 type DelegationMode = "read-only" | "isolated-write"
 
@@ -415,6 +415,8 @@ function getDelegationStatusPresentation(status: string): {
       return { icon: "🔵", label, variant: "info" }
     case "complete":
       return { icon: "🟢", label, variant: "success" }
+    case "interrupted":
+      return { icon: "🔴", label, variant: "error" }
     case "review_pending":
       return { icon: "🟣", label, variant: "success" }
     case "accepted":
@@ -663,6 +665,7 @@ class DelegationManager {
     if (delegation.status === "review_pending") title = "Isolated task ready for review"
     else if (delegation.status === "timeout") title = "Background task timed out"
     else if (delegation.status === "cancelled") title = "Background task cancelled"
+    else if (delegation.status === "interrupted") title = "Background task interrupted"
     else if (delegation.status === "error") title = "Background task failed"
 
     await this.showToast({
@@ -949,7 +952,7 @@ class DelegationManager {
   async describeSameSessionTasks(sessionID: string): Promise<string | undefined> {
     const tasks = await this.listSameSessionTasks(sessionID)
     if (tasks.length === 0) return undefined
-    const lines = tasks.map((task) => `- #${task.sequence ?? "?"} — ${summarize(task.title, 120)}`)
+    const lines = tasks.map((task) => `- #${task.sequence ?? "?"} - ${summarize(task.title, 120)}`)
     return ["<same-session-task-context>", "## Same-Session Background Tasks", "", ...lines, "", "Use same_session_task_read({ task: \"<number>\" }) to inspect one of these tasks.", "</same-session-task-context>"].join("\n")
   }
 
@@ -961,7 +964,7 @@ class DelegationManager {
     const numeric = normalizePositiveInt(normalizedRef)
     const task = tasks.find((item) => (numeric !== undefined ? item.sequence === numeric : item.id === taskRef || item.id === normalizedRef))
     if (!task) {
-      const known = tasks.map((item) => `#${item.sequence ?? "?"} — ${item.title}`).join("\n")
+      const known = tasks.map((item) => `#${item.sequence ?? "?"} - ${item.title}`).join("\n")
       return `No same-session background task matched \"${taskRef}\".\n\nAvailable tasks:\n${known}`
     }
 
@@ -1749,8 +1752,7 @@ Review artifacts before applying anything to the main workspace. This plugin doe
 
     if (delegation.sessionID) {
       try {
-        await this.client.session.delete({ path: { id: delegation.sessionID } })
-        delegation.sessionID = undefined
+        await this.client.session.abort({ sessionID: delegation.sessionID })
       } catch {
         // ignore
       }
@@ -1896,8 +1898,7 @@ Review artifacts before applying anything to the main workspace. This plugin doe
 
     if (delegation.sessionID) {
       try {
-        await this.client.session.delete({ path: { id: delegation.sessionID } })
-        delegation.sessionID = undefined
+        await this.client.session.abort({ sessionID: delegation.sessionID })
       } catch {
         // ignore
       }
@@ -1911,6 +1912,56 @@ Review artifacts before applying anything to the main workspace. This plugin doe
     } else {
       await this.persistOutput(delegation, `${result}\n\n[TIMEOUT REACHED]`)
     }
+    this.releaseConcurrency(delegation)
+    await this.notifyParent(delegation)
+  }
+
+  async handleSessionError(sessionID: string, error?: { name?: string; message?: string }): Promise<void> {
+    const delegation = this.findBySession(sessionID)
+    if (!delegation || delegation.status !== "running") return
+
+    delegation.status = error?.name === "MessageAbortedError" ? "interrupted" : "error"
+    delegation.completedAt = new Date()
+    delegation.error = error?.message || error?.name || "Delegation session failed before completion"
+    delegation.result = await this.getResult(delegation)
+    await this.refreshProgress(delegation)
+    const metadata = deriveMetadata(delegation.result)
+    delegation.title = metadata.title
+    delegation.description = metadata.description
+    const content = delegation.status === "interrupted" ? `${delegation.result}\n\n[INTERRUPTED]` : delegation.result
+
+    if (delegation.mode === "isolated-write") {
+      await this.captureIsolatedArtifacts(delegation, content)
+      await this.writeIsolatedSummary(delegation, content)
+    } else {
+      await this.persistOutput(delegation, content)
+    }
+
+    this.releaseConcurrency(delegation)
+    await this.notifyParent(delegation)
+  }
+
+  async handleSessionDeleted(sessionID: string): Promise<void> {
+    const delegation = this.findBySession(sessionID)
+    if (!delegation || delegation.status !== "running") return
+
+    delegation.status = "interrupted"
+    delegation.completedAt = new Date()
+    delegation.error = "Delegation session was deleted before completion"
+    delegation.result = await this.getResult(delegation)
+    await this.refreshProgress(delegation)
+    const metadata = deriveMetadata(delegation.result)
+    delegation.title = metadata.title
+    delegation.description = metadata.description
+    const content = `${delegation.result}\n\n[SESSION DELETED]`
+
+    if (delegation.mode === "isolated-write") {
+      await this.captureIsolatedArtifacts(delegation, content)
+      await this.writeIsolatedSummary(delegation, content)
+    } else {
+      await this.persistOutput(delegation, content)
+    }
+
     this.releaseConcurrency(delegation)
     await this.notifyParent(delegation)
   }
@@ -2698,6 +2749,14 @@ export const BackgroundAgents: Plugin = async (ctx) => {
         const sessionID = event.properties.sessionID
         const delegation = manager.findBySession(sessionID)
         if (delegation) await manager.handleSessionIdle(sessionID)
+      }
+      if (event.type === "session.error") {
+        const sessionID = event.properties.sessionID
+        if (sessionID) await manager.handleSessionError(sessionID, event.properties.error)
+      }
+      if (event.type === "session.deleted") {
+        const sessionID = event.properties.sessionID
+        if (sessionID) await manager.handleSessionDeleted(sessionID)
       }
     },
   }
