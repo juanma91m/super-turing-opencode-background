@@ -14,7 +14,7 @@ index 49bf42c..a58e3df 100644
          evt.preventDefault()
          option.onSelect?.(dialog)
 diff --git a/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx b/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
-index 09d952e..7f19342 100644
+index e8dbaee..4d2682f 100644
 --- a/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
 +++ b/packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx
 @@ -2,7 +2,7 @@ import { useDialog } from "@tui/ui/dialog"
@@ -73,7 +73,7 @@ index 09d952e..7f19342 100644
  
    function recover(session: NonNullable<ReturnType<typeof sessions>[number]>) {
      const workspace = project.workspace.get(session.workspaceID!)
-@@ -165,6 +186,8 @@ export function DialogSessionList() {
+@@ -167,6 +188,8 @@ export function DialogSessionList() {
    })
  
    onMount(() => {
@@ -82,7 +82,7 @@ index 09d952e..7f19342 100644
      dialog.setSize("large")
    })
  
-@@ -179,9 +202,11 @@ export function DialogSessionList() {
+@@ -181,9 +204,11 @@ export function DialogSessionList() {
          setToDelete(undefined)
        }}
        onSelect={(option) => {
@@ -96,10 +96,10 @@ index 09d952e..7f19342 100644
          dialog.clear()
        }}
 diff --git a/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx b/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
-index 74332c7..6bb3910 100644
+index 73ef547..5c0ad07 100644
 --- a/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
 +++ b/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
-@@ -53,6 +53,20 @@ export type PromptProps = {
+@@ -58,6 +58,20 @@ export type PromptProps = {
    workspaceID?: string
    visible?: boolean
    disabled?: boolean
@@ -120,7 +120,7 @@ index 74332c7..6bb3910 100644
    onSubmit?: () => void
    ref?: (ref: PromptRef | undefined) => void
    hint?: JSX.Element
-@@ -127,18 +141,28 @@ export function Prompt(props: PromptProps) {
+@@ -132,18 +146,28 @@ export function Prompt(props: PromptProps) {
    const sdk = useSDK()
    const editor = useEditorContext()
    const route = useRoute()
@@ -151,7 +151,7 @@ index 74332c7..6bb3910 100644
    const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
    const list = createMemo(() => props.placeholders?.normal ?? [])
    const shell = createMemo(() => props.placeholders?.shell ?? [])
-@@ -450,7 +474,8 @@ export function Prompt(props: PromptProps) {
+@@ -460,7 +484,8 @@ export function Prompt(props: PromptProps) {
              setStore("mode", "normal")
              return
            }
@@ -161,7 +161,7 @@ index 74332c7..6bb3910 100644
  
            setStore("interrupt", store.interrupt + 1)
  
-@@ -460,7 +485,7 @@ export function Prompt(props: PromptProps) {
+@@ -470,7 +495,7 @@ export function Prompt(props: PromptProps) {
  
            if (store.interrupt >= 2) {
              void sdk.client.session.abort({
@@ -170,7 +170,7 @@ index 74332c7..6bb3910 100644
              })
              setStore("interrupt", 0)
            }
-@@ -833,10 +858,11 @@ export function Prompt(props: PromptProps) {
+@@ -843,10 +868,11 @@ export function Prompt(props: PromptProps) {
        return false
      }
  
@@ -184,7 +184,7 @@ index 74332c7..6bb3910 100644
        dialog.replace(() => (
          <DialogWorkspaceUnavailable
            onRestore={() => {
-@@ -857,7 +883,7 @@ export function Prompt(props: PromptProps) {
+@@ -867,7 +893,7 @@ export function Prompt(props: PromptProps) {
      }
  
      const variant = local.model.variant.current()
@@ -193,7 +193,7 @@ index 74332c7..6bb3910 100644
      if (sessionID == null) {
        const workspace = workspaceSelection()
        const workspaceID = iife(() => {
-@@ -977,25 +1003,42 @@ export function Prompt(props: PromptProps) {
+@@ -986,25 +1012,42 @@ export function Prompt(props: PromptProps) {
            })),
        })
      } else {
@@ -251,18 +251,18 @@ index 74332c7..6bb3910 100644
 +          })
 +          .catch(() => {})
 +      }
-       lastSubmittedEditorSelectionKey = currentEditorSelectionKey
+       if (editorParts.length > 0) editor.markSelectionSent()
      }
      history.append({
-@@ -1011,7 +1054,7 @@ export function Prompt(props: PromptProps) {
+@@ -1020,7 +1063,7 @@ export function Prompt(props: PromptProps) {
      props.onSubmit?.()
  
      // temporary hack to make sure the message is sent
--    if (!props.sessionID)
-+    if (!currentSessionID)
+-    if (!props.sessionID) {
++    if (!currentSessionID) {
+       if (editorParts.length > 0) editor.preserveSelectionFromNewSession()
        setTimeout(() => {
          route.navigate({
-           type: "session",
 diff --git a/packages/opencode/src/cli/cmd/tui/context/keybind.tsx b/packages/opencode/src/cli/cmd/tui/context/keybind.tsx
 index 2c1ab24..7adc16e 100644
 --- a/packages/opencode/src/cli/cmd/tui/context/keybind.tsx

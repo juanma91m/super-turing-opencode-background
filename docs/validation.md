@@ -101,3 +101,23 @@ Expected result:
 - the command succeeds when the adopted install is healthy, or when the only remaining drift is a recoverable legacy runtime issue
 - if marker, launcher or backup drift, the command fails explicitly instead of overwriting the install root
 - legacy runtime drift (`runtime_missing` or an unmanaged legacy runtime path) remains recoverable as long as marker + backup are still valid
+
+## Managed local upgrade validation
+
+To validate migration from one supported managed install to another:
+
+```bash
+node ./scripts/restore-local-install.mjs
+node ./scripts/enable.mjs --opencode-root /path/to/new-opencode-checkout
+node ./scripts/adopt-local-install.mjs \
+  --checkout-root /path/to/new-opencode-checkout \
+  --bun-path /path/to/bun
+node ./scripts/status.mjs --install-root ~/.opencode --json
+```
+
+Expected result:
+
+- `managedLocalInstall.health` is `adopted`
+- `managedLocalInstall.checkoutVersion` matches the new supported version
+- `managedLocalInstall.launcher.matchesExpected` is `true`
+- `managedLocalInstall.problems` is empty

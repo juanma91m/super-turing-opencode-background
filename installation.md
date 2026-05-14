@@ -6,7 +6,7 @@ Esta guía documenta el flujo **soportado real** del add-on `opencode-background
 
 Scope soportado hoy:
 
-- OpenCode **1.14.39**
+- OpenCode **1.14.39** o **1.14.41**
 - modo `patched-source-checkout`
 - modo `managed-local-install` sobre `~/.opencode`
 - `managed-local-install` validado en **Linux x64**
@@ -17,7 +17,7 @@ Esto **no** es todavía una instalación `plugin-only` sobre builds oficiales de
 
 - `node`
 - `git`
-- un checkout fuente compatible de OpenCode `1.14.39`
+- un checkout fuente compatible de OpenCode `1.14.39` o `1.14.41`
 - para `managed-local-install`: `bun`
 - permisos para escribir en:
   - `~/.config/opencode/plugins/`
@@ -96,6 +96,8 @@ node ./scripts/adopt-local-install.mjs \
   --bun-path /ruta/al/bun
 ```
 
+`--bun-path` puede apuntar a un binario standalone fuera de `PATH`; el lifecycle lo agrega al entorno durante `bun install` y durante la build del runtime administrado.
+
 Esto:
 
 - hace backup de `~/.opencode`
@@ -130,9 +132,38 @@ opencode --version
 0.0.0--<timestamp>
 ```
 
-Si reconstruís el runtime desde otra build, el sufijo timestamp puede variar. Lo importante es que ya no esté ejecutando la versión local original `1.14.39` del install previo.
+Si reconstruís el runtime desde otra build, el sufijo timestamp puede variar. Lo importante es que ya no esté ejecutando la versión local original `1.14.39` o `1.14.41` del install previo.
 
-### 4. Restaurar la instalación local original
+### 4. Actualizar una instalación ya adoptada a otra versión soportada
+
+Si ya estabas en `managed-local-install` sobre otra versión soportada (por ejemplo `1.14.39`) y querés pasar a `1.14.41`:
+
+1. restaurá el install actual:
+
+   ```bash
+   node ./scripts/restore-local-install.mjs
+   ```
+
+2. prepará el nuevo checkout fuente:
+
+   ```bash
+   node ./scripts/enable.mjs --opencode-root /ruta/al/nuevo-opencode-checkout
+   ```
+
+3. re-adoptá `~/.opencode` usando ese checkout:
+
+   ```bash
+   node ./scripts/adopt-local-install.mjs \
+     --checkout-root /ruta/al/nuevo-opencode-checkout \
+     --bun-path /ruta/al/bun
+   ```
+
+Notas útiles del lifecycle actual:
+
+- `restore-local-install` puede dejar los plugins globales en sitio si detecta que fueron modificados respecto del estado guardado; después `enable` los vuelve a reconciliar contra el source-of-truth actual del add-on.
+- la validación final debería mostrar `checkoutVersion` apuntando a la nueva versión soportada.
+
+### 5. Restaurar la instalación local original
 
 ```bash
 node ./scripts/restore-local-install.mjs
@@ -144,7 +175,7 @@ Comportamiento esperado:
 - elimina el plugin global del add-on si sigue intacto
 - si el plugin fue modificado manualmente, lo deja en sitio y lo informa
 
-### 5. Revertir también el checkout fuente base
+### 6. Revertir también el checkout fuente base
 
 Si querés cerrar completamente el flujo y devolver también el checkout fuente a su estado previo:
 

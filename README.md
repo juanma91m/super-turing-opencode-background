@@ -22,7 +22,7 @@ Hoy el add-on se distribuye como:
 
 - un **plugin server/runtime** (`background-agents.ts`) para delegaciones async,
 - un **plugin TUI** (`background-agents-tui`) para la UX visible en foreground,
-- un **patch versionado del host/core** para OpenCode `1.14.39`,
+- un **patch versionado del host/core** para OpenCode `1.14.39` y `1.14.41`,
 - y un lifecycle propio para instalar, revalidar, adoptar una instalación local y restaurarla.
 
 En `managed-local-install`, el add-on:
@@ -43,7 +43,7 @@ En `managed-local-install`, el add-on:
 
 ### Soportado
 
-- `patched-source-checkout` sobre OpenCode **1.14.39**
+- `patched-source-checkout` sobre OpenCode **1.14.39** y **1.14.41**
 - `managed-local-install` sobre instalación local `curl-binary` en `~/.opencode`
 - `managed-local-install` validado en **Linux x64**
 
@@ -66,6 +66,7 @@ Hay dos caminos honestamente soportados:
    - primero preparás un checkout fuente compatible con `enable`
    - después adoptás `~/.opencode` usando ese checkout como base
    - el install adoptado deja de depender de `/tmp` para ejecutar el runtime administrado
+   - para cambiar entre versiones soportadas, hacés `restore-local-install` y luego repetís `enable` + `adopt-local-install` con el checkout nuevo
 
 ## Instalación
 
@@ -147,7 +148,7 @@ La idea es que esta rama quede lista para luego mergearse tanto con `main` como 
 
 ## Cómo presentar honestamente esta alpha
 
-> Add-on alpha para OpenCode 1.14.39,
+> Add-on alpha para OpenCode 1.14.39 / 1.14.41,
 > orientado a checkouts fuente compatibles y a takeover administrado de `~/.opencode` en Linux x64,
 > con lifecycle reversible y explícito,
 > no todavía como solución universal para cualquier instalación de OpenCode.
