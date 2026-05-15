@@ -2396,6 +2396,9 @@ Use this for:
 - review and analysis
 - design work that does not edit files
 - any task where you want persistent, retrievable output while continuing productive work
+- any task that the user explicitly wants to appear in Background Tasks / Delegations
+
+Prefer this over the generic task/subagent flow when sidebar visibility matters: normal task/subagent sessions may open child sessions, but they are not treated as addon Background Tasks automatically.
 
 Results are persisted to disk and survive compaction. Nested read-only delegation is policy-limited to approved caller/target pairs and one secondary level.`,
     args: {
@@ -2703,6 +2706,12 @@ You have tools for parallel background work:
 | \`delegate_isolated\` | Async, isolated OpenCode worktree, persisted diff artifacts | master-dev needs parallel implementation without touching the main workspace |
 | \`task\` | Synchronous, blocks until complete | You need the result before continuing, or the work can write/edit/execute with risk |
 
+## Background Tasks Sidebar Rule
+
+- If the user explicitly asks that the work appear in **Background Tasks** / **Delegations**, prefer \`delegate\` (or \`delegate_isolated\` for isolated write work).
+- Do **NOT** rely on the generic \`task\` tool for this UX requirement: normal subagent/task sessions may show up as child sessions, but they are not guaranteed to appear in the addon's Background Tasks sidebar.
+- Use \`task\` only when you need its synchronous/blocking behavior and sidebar visibility is not a requirement.
+
 ## Critical Constraints
 
 - \`delegate\` is ONLY for read-only target agents.
@@ -2759,6 +2768,7 @@ On isolated \`error\` or \`timeout\`, the plugin attempts automatic worktree cle
 - NEVER ask for a long open-ended report when a short decision-support artifact would do.
 - NEVER use \`delegate_isolated\` as a way to bypass review, tests, or ownership of final integration.
 - NEVER use \`delegation_apply\` on a dirty main workspace.
+- NEVER choose \`task\` if the user explicitly asked for a visible Background Tasks / Delegations entry.
 
 </delegation-system>
 </task-notification>`
