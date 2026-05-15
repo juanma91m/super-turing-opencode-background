@@ -135,6 +135,27 @@ type TaskDialogValue =
   | { kind: "action"; action: "background-current" | "queue-prompt" }
   | { kind: "task"; task: TaskRecord };
 
+type AsyncCommandSpec = {
+  title: string;
+  value: string;
+  description?: string;
+  category?: string;
+  keybind?: string;
+  suggested?: boolean;
+  hidden?: boolean;
+  enabled?: boolean;
+  slash?: {
+    name: string;
+    aliases?: string[];
+  };
+  onSelect?: () => void | Promise<void>;
+};
+
+type ShortcutRepeatState = {
+  command: "bg-current" | "bg-foreground" | "bg-inspection-interrupt";
+  at: number;
+};
+
 const POLL_INTERVAL_MS = 2500;
 const TOASTABLE_STATUSES = new Set([
   "complete",
@@ -149,6 +170,7 @@ const TOASTABLE_STATUSES = new Set([
 const SESSION_STATE_PREFIX = "background-agents-tui";
 const MAX_TRACKED_SESSION_RUNS = 25;
 const SIDEBAR_BG_COLLAPSED_KEY = `${SESSION_STATE_PREFIX}:sidebar:collapsed`;
+const SEQUENCE_REPEAT_WINDOW_MS = 900;
 
 function hashString(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 16);
@@ -407,6 +429,56 @@ function buildSidebarSections(input: {
           : undefined,
     },
   ];
+}
+
+function supportsKeymapApi(api: Parameters<TuiPlugin>[0]): boolean {
+  const keymap = (api as any).keymap;
+  return Boolean(keymap && typeof keymap.registerLayer === "function");
+}
+
+function registerAsyncCommandsCompat(
+  api: Parameters<TuiPlugin>[0],
+  commands: AsyncCommandSpec[],
+): () => void {
+  if (supportsKeymapApi(api)) {
+    const keymap = (api as any).keymap;
+
+    return keymap.registerLayer({
+      commands: commands.map((item) => ({
+        namespace: "palette",
+        name: item.value,
+        title: item.title,
+        desc: item.description,
+        category: item.category,
+        suggested: item.suggested,
+        hidden: item.hidden,
+        enabled: true,
+        slashName: item.slash?.name,
+        slashAliases: item.slash?.aliases,
+        run() {
+          return item.onSelect?.();
+        },
+      })),
+      bindings: commands.flatMap((item) => {
+        if (!item.keybind) return [];
+        if (
+          item.value === "bg-current" ||
+          item.value === "bg-foreground" ||
+          item.value === "bg-inspection-interrupt"
+        )
+          return [];
+        return [
+          {
+            key: item.keybind,
+            cmd: item.value,
+            desc: item.title,
+          },
+        ];
+      }),
+    });
+  }
+
+  return (api as any).command.register(() => commands);
 }
 
 function buildSessionStateKey(sessionID: string): string {
@@ -1509,12 +1581,14 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
 
   const resolveInterruptibleInspectionSourceSessionID = () => {
     const inspection = loadInspectionState();
-    if (!inspection || inspection.taskSource !== "session-run")
-      return undefined;
+    if (!inspection) return undefined;
     return inspection.sourceSessionID || inspection.sessionID || undefined;
   };
 
+  const isDelegationInspection = () => loadInspectionState()?.taskSource === "delegation";
+
   const interruptInspectionRun = async () => {
+    const inspection = loadInspectionState();
     const sessionID = resolveInterruptibleInspectionSourceSessionID();
     if (!sessionID) {
       resetInspectionInterrupt();
@@ -1527,7 +1601,9 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       return;
     }
 
-    if (api.state.session.status(sessionID)?.type !== "busy") {
+    const liveBusy = api.state.session.status(sessionID)?.type === "busy";
+    const optimisticDelegationInterrupt = inspection?.taskSource === "delegation";
+    if (!liveBusy && !optimisticDelegationInterrupt) {
       resetInspectionInterrupt();
       api.ui.toast({
         title: "La tarea ya no está corriendo",
@@ -2185,7 +2261,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     resolve: buildSessionListProjection,
   });
 
-  const unregisterCommands = api.command.register(() => {
+  const unregisterCommands = registerAsyncCommandsCompat(api, (() => {
     const routeSessionID = currentRouteSessionID();
     const promptTargetSessionID = resolvePromptTargetSessionID(routeSessionID);
     const busy = Boolean(
@@ -2196,7 +2272,8 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       resolveInterruptibleInspectionSourceSessionID();
     const inspectionBusy = Boolean(
       inspectionSourceSessionID &&
-        api.state.session.status(inspectionSourceSessionID)?.type === "busy",
+        (api.state.session.status(inspectionSourceSessionID)?.type === "busy" ||
+          isDelegationInspection()),
     );
 
     return [
@@ -2276,13 +2353,99 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         },
       },
     ];
-  });
+  })());
+
+  let lastShortcutRepeat: ShortcutRepeatState | undefined;
+  let lastRawEscapeAt = 0;
+  const unregisterSequenceRepeat = supportsKeymapApi(api)
+    ? (api as any).keymap.intercept("key", (ctx: any) => {
+        const event = ctx.event;
+        if (!event)
+          return;
+        if (
+          event.name !== "escape" &&
+          (!event.ctrl || event.shift || event.meta || event.super || event.hyper)
+        )
+          return;
+
+        const routeSessionID = currentRouteSessionID();
+        const promptTargetSessionID = resolvePromptTargetSessionID(routeSessionID);
+        const inspection = loadInspectionState();
+        const inspectionSourceSessionID = resolveInterruptibleInspectionSourceSessionID();
+        const backgroundCurrentEnabled = Boolean(
+          routeSessionID &&
+            promptTargetSessionID &&
+            api.state.session.status(promptTargetSessionID)?.type === "busy",
+        );
+        const foregroundEnabled = Boolean(
+          routeSessionID &&
+            (inspection?.returnSessionID ||
+              inspection?.sessionID === routeSessionID ||
+              (resolveShellSessionID(routeSessionID) || routeSessionID) !== routeSessionID),
+        );
+        const inspectionInterruptEnabled = Boolean(
+          inspectionSourceSessionID &&
+            (api.state.session.status(inspectionSourceSessionID)?.type === "busy" ||
+              isDelegationInspection()),
+        );
+
+        const command =
+          event.name === "escape" && inspectionInterruptEnabled
+            ? "bg-inspection-interrupt"
+            : event.name === "b" && backgroundCurrentEnabled
+            ? "bg-current"
+            : event.name === "f" && foregroundEnabled
+              ? "bg-foreground"
+              : undefined;
+        if (!command) {
+          lastShortcutRepeat = undefined;
+          return;
+        }
+
+        const now = Date.now();
+        if (
+          lastShortcutRepeat?.command === command &&
+          now - lastShortcutRepeat.at <= SEQUENCE_REPEAT_WINDOW_MS
+        ) {
+          lastShortcutRepeat = undefined;
+          ctx.consume();
+          if (command === "bg-current") void backgroundCurrentRun();
+          else if (command === "bg-foreground") void openForegroundCommand();
+          else void interruptInspectionRun();
+          return;
+        }
+
+        lastShortcutRepeat = { command, at: now };
+      })
+    : () => {};
+
+  const unregisterRawEscapeRepeat = supportsKeymapApi(api)
+    ? (api as any).keymap.intercept("raw", (ctx: any) => {
+        const inspectionSourceSessionID = resolveInterruptibleInspectionSourceSessionID();
+        const inspectionInterruptEnabled = Boolean(
+          inspectionSourceSessionID &&
+            (api.state.session.status(inspectionSourceSessionID)?.type === "busy" ||
+              isDelegationInspection()),
+        );
+        if (!inspectionInterruptEnabled || ctx.sequence !== "\u001b") return;
+
+        const now = Date.now();
+        if (now - lastRawEscapeAt <= SEQUENCE_REPEAT_WINDOW_MS) {
+          lastRawEscapeAt = 0;
+          ctx.stop();
+          void interruptInspectionRun();
+          return;
+        }
+
+        lastRawEscapeAt = now;
+      })
+    : () => {};
 
   api.slots.register({
     order: 1000,
     id: "background-agents-tui-footer",
     slots: {
-      session_prompt: (props: {
+      session_prompt: (_ctx: unknown, props: {
         session_id: string;
         visible?: boolean;
         disabled?: boolean;
@@ -2314,7 +2477,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           },
         });
       },
-      session_notice: (props: {
+      session_notice: (_ctx: unknown, props: {
         session_id: string;
         active_session_id: string;
       }) =>
@@ -2337,6 +2500,8 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     unregisterSessionAdapter();
     unregisterSessionListAdapter();
     unregisterCommands();
+    unregisterSequenceRepeat();
+    unregisterRawEscapeRepeat();
   });
 };
 

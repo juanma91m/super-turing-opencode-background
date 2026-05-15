@@ -50,7 +50,7 @@
         "supportLevel": "alpha-source-checkout-only",
         "requiresPatch": true,
         "requiresCleanWorktree": true,
-        "supportedVersions": ["1.14.39", "1.14.41"],
+        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42"],
         "supportedDetectionMethods": [
           "source-checkout-explicit",
           "source-checkout-cwd"
@@ -76,7 +76,7 @@
         "requiresPatch": false,
         "requiresCleanWorktree": false,
         "requiresCheckoutSource": true,
-        "supportedVersions": ["1.14.39", "1.14.41"],
+        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42"],
         "supportedDetectionMethods": ["curl-binary"],
         "notes": "Managed takeover of a local curl-based install with full backup and restore."
       }

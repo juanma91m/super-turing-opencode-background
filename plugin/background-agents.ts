@@ -161,8 +161,11 @@ interface SameSessionBackgroundState {
 
 interface SameSessionTaskItem {
   id: string
+  source: "session-run" | "delegation"
   sessionID: string
+  parentSessionID?: string
   sequence?: number
+  displaySequence?: number
   title: string
   parentUserMessageID?: string
   assistantMessageID?: string
@@ -323,6 +326,25 @@ function compareSameSessionTaskItems(a: SameSessionTaskItem, b: SameSessionTaskI
   const bDetached = Number(b.detachedAt || 0)
   if (aDetached !== bDetached) return bDetached - aDetached
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+function sameSessionTaskSortKey(item: SameSessionTaskItem): string {
+  return `${String(item.detachedAt || 0).padStart(16, "0")}:${item.id}`
+}
+
+function sameSessionDisplayOrderKey(item: SameSessionTaskItem): string {
+  return `${String(item.detachedAt || 0).padStart(16, "0")}:${item.id}`
+}
+
+function compareSameSessionTaskDialogOrder(a: SameSessionTaskItem, b: SameSessionTaskItem): number {
+  const aSequence = a.source === "session-run" ? normalizePositiveInt(a.sequence) : undefined
+  const bSequence = b.source === "session-run" ? normalizePositiveInt(b.sequence) : undefined
+  if (aSequence !== undefined && bSequence !== undefined && aSequence !== bSequence) return aSequence - bSequence
+  const aOrder = sameSessionDisplayOrderKey(a)
+  const bOrder = sameSessionDisplayOrderKey(b)
+  if (aOrder !== bOrder) return aOrder.localeCompare(bOrder)
+  if (a.source !== b.source) return a.source.localeCompare(b.source)
+  return a.id.localeCompare(b.id)
 }
 
 function collectSameSessionLineage(
@@ -889,20 +911,59 @@ class DelegationManager {
     }
   }
 
+  private async readSameSessionDelegations(allowedParentSessionIDs: ReadonlySet<string>): Promise<SameSessionTaskItem[]> {
+    const items: SameSessionTaskItem[] = []
+
+    try {
+      const sessionDirs = await fs.readdir(this.baseDir, { withFileTypes: true })
+      for (const sessionDir of sessionDirs) {
+        if (!sessionDir.isDirectory() || !allowedParentSessionIDs.has(sessionDir.name)) continue
+        const sessionPath = path.join(this.baseDir, sessionDir.name)
+        const delegationDirs = await fs.readdir(sessionPath, { withFileTypes: true }).catch(() => [])
+        for (const delegationDir of delegationDirs) {
+          if (!delegationDir.isDirectory()) continue
+          const metaPath = path.join(sessionPath, delegationDir.name, "meta.json")
+          try {
+            const raw = await fs.readFile(metaPath, "utf8")
+            const meta = JSON.parse(raw) as PersistedDelegationMeta
+            items.push({
+              id: meta.id,
+              source: "delegation",
+              sessionID: meta.sessionID ?? sessionDir.name,
+              parentSessionID: sessionDir.name,
+              title: meta.title ?? meta.description ?? meta.promptPreview ?? "Delegación background",
+              detachedAt: parseIsoDate(meta.completedAt ?? meta.startedAt ?? meta.queuedAt)?.getTime(),
+            })
+          } catch {
+            // ignore malformed or transient files
+          }
+        }
+      }
+    } catch {
+      // ignore missing delegation dir
+    }
+
+    return items
+  }
+
   private async listSameSessionTasks(sessionID: string): Promise<SameSessionTaskItem[]> {
     const kv = await this.readKvState()
     const statePrefix = "background-agents-tui:session:"
     const currentState = normalizeSameSessionBackgroundState(kv[`${statePrefix}${sessionID}`])
     const rootSessionID = currentState.threadRootSessionID || sessionID
 
-    const tasks = Object.entries(kv)
+    const sameSessionIDs = new Set<string>([rootSessionID])
+
+    const sessionRunTasks = Object.entries(kv)
       .filter(([key]) => key.startsWith(statePrefix))
       .flatMap(([key, value]) => {
         const owningSessionID = key.slice(statePrefix.length)
         const state = normalizeSameSessionBackgroundState(value)
         if (owningSessionID !== rootSessionID && state.threadRootSessionID !== rootSessionID) return []
+        sameSessionIDs.add(owningSessionID)
         return (state.trackedTaskRefs ?? []).map((ref) => ({
           id: ref.id,
+          source: "session-run" as const,
           sessionID: owningSessionID,
           sequence: normalizePositiveInt(ref.sequence),
           title: ref.title || "Tarea background de la misma sesión",
@@ -913,8 +974,17 @@ class DelegationManager {
       })
       .sort(compareSameSessionTaskItems)
 
+    const tasks = [...sessionRunTasks, ...(await this.readSameSessionDelegations(sameSessionIDs))]
+      .sort(compareSameSessionTaskDialogOrder)
+      .map((task, index) => ({
+        ...task,
+        displaySequence: index + 1,
+      }))
+      .slice()
+      .sort((a, b) => sameSessionTaskSortKey(b).localeCompare(sameSessionTaskSortKey(a)))
+
     const unique = new Map<string, SameSessionTaskItem>()
-    for (const task of tasks) unique.set(`${task.sessionID}:${task.id}`, task)
+    for (const task of tasks) unique.set(`${task.source}:${task.parentSessionID ?? task.sessionID}:${task.id}`, task)
     return Array.from(unique.values())
   }
 
@@ -952,7 +1022,7 @@ class DelegationManager {
   async describeSameSessionTasks(sessionID: string): Promise<string | undefined> {
     const tasks = await this.listSameSessionTasks(sessionID)
     if (tasks.length === 0) return undefined
-    const lines = tasks.map((task) => `- #${task.sequence ?? "?"} - ${summarize(task.title, 120)}`)
+    const lines = tasks.map((task) => `- #${task.displaySequence ?? task.sequence ?? "?"} - ${summarize(task.title, 120)}`)
     return ["<same-session-task-context>", "## Same-Session Background Tasks", "", ...lines, "", "Use same_session_task_read({ task: \"<number>\" }) to inspect one of these tasks.", "</same-session-task-context>"].join("\n")
   }
 
@@ -962,17 +1032,32 @@ class DelegationManager {
 
     const normalizedRef = taskRef.trim().replace(/^#/, "")
     const numeric = normalizePositiveInt(normalizedRef)
-    const task = tasks.find((item) => (numeric !== undefined ? item.sequence === numeric : item.id === taskRef || item.id === normalizedRef))
+    const task = tasks.find((item) => (numeric !== undefined ? (item.displaySequence ?? item.sequence) === numeric : item.id === taskRef || item.id === normalizedRef))
     if (!task) {
-      const known = tasks.map((item) => `#${item.sequence ?? "?"} - ${item.title}`).join("\n")
+      const known = tasks.map((item) => `#${item.displaySequence ?? item.sequence ?? "?"} - ${item.title}`).join("\n")
       return `No same-session background task matched \"${taskRef}\".\n\nAvailable tasks:\n${known}`
+    }
+
+    if (task.source === "delegation") {
+      const output = await this.readOutput(task.parentSessionID ?? task.sessionID, task.id, false)
+      return [
+        `## Background task #${task.displaySequence ?? task.sequence ?? "?"}`,
+        ``,
+        `**Source:** delegation`,
+        `**Parent session:** ${task.parentSessionID ?? "N/A"}`,
+        `**Session:** ${task.sessionID}`,
+        `**Task ID:** ${task.id}`,
+        `**Title:** ${task.title}`,
+        ``,
+        output,
+      ].join("\n")
     }
 
     const messages = await this.getSessionMessages(task.sessionID)
     const selected = this.collectSameSessionTaskMessages(messages, task)
     const rendered = this.renderMessages(selected)
     return [
-      `## Same-session task #${task.sequence ?? "?"}`,
+      `## Same-session task #${task.displaySequence ?? task.sequence ?? "?"}`,
       ``,
       `**Session:** ${task.sessionID}`,
       `**Task ID:** ${task.id}`,
