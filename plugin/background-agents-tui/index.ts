@@ -1852,8 +1852,15 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
       nextStatuses.set(`${item.source}:${item.id}`, item.status);
 
     const inspection = loadInspectionState();
+    const keepDelegationInspectionInOpenChild = Boolean(
+      inspection?.taskSource === "delegation" &&
+        sessionID &&
+        (inspection.sessionID === sessionID ||
+          inspection.sourceSessionID === sessionID),
+    );
     if (
       inspection &&
+      !keepDelegationInspectionInOpenChild &&
       !next.items.some((item) => {
         if (inspection.taskSource === "delegation") {
           return (
