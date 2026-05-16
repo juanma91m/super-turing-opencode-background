@@ -29,7 +29,8 @@
       "1.14.42": "patches/opencode/1.14.42.patch",
       "1.14.46": "patches/opencode/1.14.46.patch",
       "1.14.48": "patches/opencode/1.14.48.patch",
-      "1.14.49": "patches/opencode/1.14.49.patch"
+      "1.14.49": "patches/opencode/1.14.49.patch",
+      "1.15.0": "patches/opencode/1.15.0.patch"
     }
   },
   "state": {

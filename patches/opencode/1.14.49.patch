@@ -919,7 +919,7 @@ index f95025494..15edcbc5e 100644
        Dialog: () => null,
        DialogAlert: () => null,
 diff --git a/packages/plugin/src/tui.ts b/packages/plugin/src/tui.ts
-index 354e44abc..f1377c2d5 100644
+index 354e44abc..d86fe7902 100644
 --- a/packages/plugin/src/tui.ts
 +++ b/packages/plugin/src/tui.ts
 @@ -208,6 +208,20 @@ export type TuiPromptProps = {
@@ -943,7 +943,18 @@ index 354e44abc..f1377c2d5 100644
    onSubmit?: () => void
    ref?: (ref: TuiPromptRef | undefined) => void
    hint?: JSX.Element
-@@ -577,6 +591,56 @@ export type TuiWorkspace = {
+@@ -469,6 +483,10 @@ export type TuiHostSlotMap = {
+   session_prompt_right: {
+     session_id: string
+   }
++  session_notice: {
++    session_id: string
++    active_session_id: string
++  }
+   home_bottom: {}
+   home_footer: {}
+   sidebar_title: {
+@@ -577,6 +595,56 @@ export type TuiWorkspace = {
    set: (workspaceID?: string) => void
  }
  
@@ -1000,7 +1011,7 @@ index 354e44abc..f1377c2d5 100644
  export type TuiPluginApi = {
    app: TuiApp
    attention: TuiAttention
-@@ -594,6 +658,10 @@ export type TuiPluginApi = {
+@@ -594,6 +662,10 @@ export type TuiPluginApi = {
      navigate: (name: string, params?: Record<string, unknown>) => void
      readonly current: TuiRouteCurrent
    }

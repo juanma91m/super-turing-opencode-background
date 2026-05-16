@@ -22,7 +22,7 @@ Hoy el add-on se distribuye como:
 
 - un **plugin server/runtime** (`background-agents.ts`) para delegaciones async,
 - un **plugin TUI** (`background-agents-tui`) para la UX visible en foreground,
-- un **patch versionado del host/core** para OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48` y `1.14.49`,
+- un **patch versionado del host/core** para OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49` y `1.15.0`,
 - y un lifecycle propio para instalar, revalidar, adoptar una instalación local y restaurarla.
 
 En `managed-local-install`, el add-on:
@@ -43,7 +43,7 @@ En `managed-local-install`, el add-on:
 
 ### Soportado
 
-- `patched-source-checkout` sobre OpenCode **1.14.39**, **1.14.41**, **1.14.42**, **1.14.46**, **1.14.48** y **1.14.49**
+- `patched-source-checkout` sobre OpenCode **1.14.39**, **1.14.41**, **1.14.42**, **1.14.46**, **1.14.48**, **1.14.49** y **1.15.0**
 - `managed-local-install` sobre instalación local `curl-binary` en `~/.opencode`
 - `managed-local-install` validado en **Linux x64**
 
@@ -148,7 +148,7 @@ La idea es que esta rama quede lista para luego mergearse tanto con `main` como 
 
 ## Cómo presentar honestamente esta alpha
 
-> Add-on alpha para OpenCode 1.14.39 / 1.14.41 / 1.14.42 / 1.14.46 / 1.14.48 / 1.14.49,
+> Add-on alpha para OpenCode 1.14.39 / 1.14.41 / 1.14.42 / 1.14.46 / 1.14.48 / 1.14.49 / 1.15.0,
 > orientado a checkouts fuente compatibles y a takeover administrado de `~/.opencode` en Linux x64,
 > con lifecycle reversible y explícito,
 > no todavía como solución universal para cualquier instalación de OpenCode.
