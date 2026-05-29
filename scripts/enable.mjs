@@ -1,7 +1,7 @@
 import { loadManifest } from "../lib/manifest.mjs";
 import { fail, runCli } from "../lib/cli.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
-import { installPlugin, removePlugin } from "../lib/plugin.mjs";
+import { installManagedFile, removeManagedFile } from "../lib/plugin.mjs";
 import { applyPatch } from "../lib/patch.mjs";
 import { loadState, saveState } from "../lib/state.mjs";
 import { sha256File } from "../lib/hash.mjs";
@@ -32,7 +32,7 @@ await runCli("enable", async (options) => {
     mode.patchRequired && target.root
       ? inspectWorktree(target.root)
       : { ok: true, clean: true, entries: [] };
-  const pluginBackupRoot = path.join(path.dirname(manifest.stateFile), "plugin-backup");
+  const managedBackupRoot = path.join(path.dirname(manifest.stateFile), "managed-file-backup");
 
   if (mode.patchRequired) {
     if (!target.root) {
@@ -62,11 +62,11 @@ await runCli("enable", async (options) => {
   const pluginResults = [];
   for (const plugin of manifest.plugins) {
     const backupPath = path.join(
-      pluginBackupRoot,
+      managedBackupRoot,
       plugin.manifest.installDirName || "root",
       plugin.manifest.installFile,
     );
-    const result = await installPlugin(plugin.sourcePath, plugin.installedPath, {
+    const result = await installManagedFile(plugin.sourcePath, plugin.installedPath, {
       dryRun: options.dryRun,
       replaceCompatibleInstalledHashes:
         plugin.manifest.compatibleInstalledHashes || [],
@@ -83,6 +83,26 @@ await runCli("enable", async (options) => {
       );
     }
     pluginResults.push({ plugin, result, backupPath });
+  }
+
+  const assetResults = [];
+  for (const asset of manifest.assets) {
+    const backupPath = path.join(managedBackupRoot, asset.manifest.id, path.basename(asset.manifest.installPath));
+    const result = await installManagedFile(asset.sourcePath, asset.installedPath, {
+      dryRun: options.dryRun,
+      backupPath,
+    });
+    if (result.state === "modified") {
+      fail(
+        {
+          message:
+            "Uno de los assets instalados del addon background fue modificado manualmente; el addon no lo sobreescribe automáticamente.",
+          details: [asset.installedPath],
+        },
+        3,
+      );
+    }
+    assetResults.push({ asset, result, backupPath });
   }
 
   try {
@@ -134,6 +154,21 @@ await runCli("enable", async (options) => {
           state: result.state,
         })),
       ),
+      assets: await Promise.all(
+        assetResults.map(async ({ asset, result, backupPath }) => ({
+          id: asset.manifest.id,
+          sourcePath: asset.sourcePath,
+          installedPath: asset.installedPath,
+          backupPath:
+            result.state === "replaced_compatible" ||
+            result.state === "would_replace_compatible"
+              ? backupPath
+              : undefined,
+          sourceHash: await sha256File(asset.sourcePath),
+          installedHash: result.installedHash || result.sourceHash,
+          state: result.state,
+        })),
+      ),
     };
 
     if (!options.dryRun) await saveState(manifest.stateFile, state);
@@ -145,6 +180,7 @@ await runCli("enable", async (options) => {
       details: [
         `mode: ${mode.id}`,
         `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
+        `assets: ${assetResults.map(({ asset, result }) => `${asset.manifest.id}=${result.state}`).join(", ") || "none"}`,
         `patch: ${patchResult.state}`,
         `version: ${target.version}`,
         `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : "dirty (dry-run allowed)") : "not_required"}`,
@@ -155,7 +191,13 @@ await runCli("enable", async (options) => {
     if (!options.dryRun) {
       for (const plugin of manifest.plugins) {
         const previousPluginState = previousState?.plugins?.find?.((item) => item.id === plugin.manifest.id) || previousState?.plugin;
-        await removePlugin(plugin.sourcePath, plugin.installedPath, previousPluginState ? { plugin: previousPluginState } : previousState, {
+        await removeManagedFile(plugin.sourcePath, plugin.installedPath, previousPluginState ? { plugin: previousPluginState } : previousState, {
+          dryRun: false,
+        }).catch(() => undefined);
+      }
+      for (const asset of manifest.assets) {
+        const previousAssetState = previousState?.assets?.find?.((item) => item.id === asset.manifest.id);
+        await removeManagedFile(asset.sourcePath, asset.installedPath, previousAssetState ? { plugin: previousAssetState } : previousState, {
           dryRun: false,
         }).catch(() => undefined);
       }

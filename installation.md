@@ -56,6 +56,9 @@ Esto hace dos cosas:
 - instala los plugins del add-on en `~/.config/opencode/plugins/`
   - `background-agents.ts`
   - `background-agents-tui/index.ts`
+- instala assets auxiliares del workflow async en `~/.config/opencode/`
+  - `PLAYBOOK-ASYNC.md`
+  - `skills/delegacion-async-opencode/SKILL.md`
 - aplica el patch versionado del host/core sobre el checkout fuente compatible
 
 Con esa instalación completa, los agentes ya pasan a conocer las tools async/background del addon sin necesitar una skill de acoplamiento extra. El plugin server/runtime (`background-agents.ts`) expone las tools y reglas, y el plugin TUI (`background-agents-tui`) aporta la UX visible.
@@ -172,7 +175,7 @@ node ./scripts/restore-local-install.mjs
 Comportamiento esperado:
 
 - restaura `~/.opencode` desde el backup
-- elimina el plugin global del add-on si sigue intacto
+- elimina los plugins y assets auxiliares globales del add-on si siguen intactos
 - si el plugin fue modificado manualmente, lo deja en sitio y lo informa
 
 ### 6. Revertir también el checkout fuente base

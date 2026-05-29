@@ -1,7 +1,7 @@
 import { loadManifest } from "../lib/manifest.mjs";
 import { runCli } from "../lib/cli.mjs";
 import { loadState } from "../lib/state.mjs";
-import { inspectPlugin } from "../lib/plugin.mjs";
+import { inspectManagedFile } from "../lib/plugin.mjs";
 import { inspectPatch } from "../lib/patch.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { inspectWorktree } from "../lib/repo.mjs";
@@ -49,9 +49,18 @@ await runCli("status", async (options) => {
   const plugins = await Promise.all(
     manifest.plugins.map(async (plugin) => ({
       plugin,
-      status: await inspectPlugin(
+      status: await inspectManagedFile(
         plugin.sourcePath,
         plugin.installedPath,
+      ),
+    })),
+  );
+  const assets = await Promise.all(
+    manifest.assets.map(async (asset) => ({
+      asset,
+      status: await inspectManagedFile(
+        asset.sourcePath,
+        asset.installedPath,
       ),
     })),
   );
@@ -97,6 +106,7 @@ await runCli("status", async (options) => {
     },
     plugin,
     plugins,
+    assets,
     patch,
     worktree,
     managedLocalInstall,
@@ -108,6 +118,7 @@ await runCli("status", async (options) => {
       : target.message,
     details: [
       `plugins: ${plugins.map(({ plugin, status }) => `${plugin.manifest.id}=${status.state}`).join(", ")}`,
+      `assets: ${assets.map(({ asset, status }) => `${asset.manifest.id}=${status.state}`).join(", ") || "none"}`,
       `patch: ${patch.state}`,
       `compat version: ${supportedVersion ? "ok" : "unsupported"}`,
       `mode: ${mode.id}`,

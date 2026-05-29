@@ -1,7 +1,7 @@
 import { loadManifest } from "../lib/manifest.mjs";
 import { fail, runCli } from "../lib/cli.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
-import { installPlugin } from "../lib/plugin.mjs";
+import { installManagedFile } from "../lib/plugin.mjs";
 import { applyPatch } from "../lib/patch.mjs";
 import { loadState, saveState } from "../lib/state.mjs";
 import { sha256File } from "../lib/hash.mjs";
@@ -50,7 +50,7 @@ await runCli("reapply", async (options) => {
 
   const pluginResults = [];
   for (const plugin of manifest.plugins) {
-    const result = await installPlugin(plugin.sourcePath, plugin.installedPath, {
+    const result = await installManagedFile(plugin.sourcePath, plugin.installedPath, {
       dryRun: options.dryRun,
       replaceCompatibleInstalledHashes:
         plugin.manifest.compatibleInstalledHashes || [],
@@ -67,6 +67,25 @@ await runCli("reapply", async (options) => {
       );
     }
     pluginResults.push({ plugin, result });
+  }
+
+  const assetResults = [];
+  for (const asset of manifest.assets) {
+    const result = await installManagedFile(asset.sourcePath, asset.installedPath, {
+      dryRun: options.dryRun,
+    });
+
+    if (result.state === "modified") {
+      fail(
+        {
+          message:
+            "Uno de los assets instalados del addon background fue modificado manualmente; el addon no lo sobreescribe automáticamente.",
+          details: [asset.installedPath],
+        },
+        3,
+      );
+    }
+    assetResults.push({ asset, result });
   }
 
   const patchResult = mode.patchRequired
@@ -114,6 +133,16 @@ await runCli("reapply", async (options) => {
           state: result.state,
         })),
       ),
+      assets: await Promise.all(
+        assetResults.map(async ({ asset, result }) => ({
+          id: asset.manifest.id,
+          sourcePath: asset.sourcePath,
+          installedPath: asset.installedPath,
+          sourceHash: await sha256File(asset.sourcePath),
+          installedHash: result.installedHash || result.sourceHash,
+          state: result.state,
+        })),
+      ),
     };
 
   if (!options.dryRun) await saveState(manifest.stateFile, state);
@@ -122,9 +151,10 @@ await runCli("reapply", async (options) => {
     message: options.dryRun
       ? `Dry run OK para reapply sobre ${targetLabel}`
       : `Addon re-aplicado sobre ${targetLabel}`,
-    details: [
-      `mode: ${mode.id}`,
+      details: [
+        `mode: ${mode.id}`,
         `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
+        `assets: ${assetResults.map(({ asset, result }) => `${asset.manifest.id}=${result.state}`).join(", ") || "none"}`,
         `patch: ${patchResult.state}`,
         `version: ${target.version}`,
         `worktree: ${mode.patchRequired ? (worktree.clean ? "clean" : options.dryRun ? "dirty (dry-run allowed)" : "dirty (patch state validated)") : "not_required"}`,

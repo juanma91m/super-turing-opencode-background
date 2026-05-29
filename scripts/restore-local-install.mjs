@@ -2,7 +2,7 @@ import { loadManifest } from "../lib/manifest.mjs";
 import { fail, runCli } from "../lib/cli.mjs";
 import { loadState, removeState } from "../lib/state.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
-import { removePlugin } from "../lib/plugin.mjs";
+import { removeManagedFile } from "../lib/plugin.mjs";
 import {
   inspectManagedLocalInstallRoot,
   restoreManagedLocalInstall,
@@ -79,7 +79,7 @@ await runCli("restore-local-install", async (options) => {
   const pluginResults = await Promise.all(
     manifest.plugins.map(async (plugin) => {
       const pluginState = state?.plugins?.find?.((item) => item.id === plugin.manifest.id) || state?.plugin;
-      const result = await removePlugin(
+      const result = await removeManagedFile(
         plugin.sourcePath,
         plugin.installedPath,
         pluginState ? { plugin: pluginState } : state,
@@ -88,6 +88,20 @@ await runCli("restore-local-install", async (options) => {
         },
       );
       return { plugin, result };
+    }),
+  );
+  const assetResults = await Promise.all(
+    manifest.assets.map(async (asset) => {
+      const assetState = state?.assets?.find?.((item) => item.id === asset.manifest.id);
+      const result = await removeManagedFile(
+        asset.sourcePath,
+        asset.installedPath,
+        assetState ? { plugin: assetState } : state,
+        {
+          dryRun: options.dryRun,
+        },
+      );
+      return { asset, result };
     }),
   );
 
@@ -105,9 +119,10 @@ await runCli("restore-local-install", async (options) => {
       `backup: ${inspection.backupPath}`,
       `result: ${result.state}`,
       `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
-      pluginResults.some(({ result }) => result.state === "modified")
-        ? "alguno de los plugins quedó instalado porque fue modificado manualmente"
-        : "plugins revertidos de forma segura",
+      `assets: ${assetResults.map(({ asset, result }) => `${asset.manifest.id}=${result.state}`).join(", ") || "none"}`,
+      pluginResults.some(({ result }) => result.state === "modified") || assetResults.some(({ result }) => result.state === "modified")
+        ? "alguno de los archivos del addon quedó instalado porque fue modificado manualmente"
+        : "plugins y assets revertidos de forma segura",
     ],
   };
 });

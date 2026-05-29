@@ -22,6 +22,8 @@ Hoy el add-on se distribuye como:
 
 - un **plugin server/runtime** (`background-agents.ts`) para delegaciones async,
 - un **plugin TUI** (`background-agents-tui`) para la UX visible en foreground,
+- un **playbook operativo** (`PLAYBOOK-ASYNC.md`) para el workflow async,
+- una **skill reusable** (`skills/delegacion-async-opencode/SKILL.md`) para orientar el uso de delegaciones,
 - un **patch versionado del host/core** para OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49` y `1.15.0`,
 - y un lifecycle propio para instalar, revalidar, adoptar una instalación local y restaurarla.
 
@@ -98,6 +100,9 @@ Garantías principales del lifecycle actual:
 - plugins:
   - `~/.config/opencode/plugins/background-agents.ts`
   - `~/.config/opencode/plugins/background-agents-tui/index.ts`
+- assets auxiliares:
+  - `~/.config/opencode/PLAYBOOK-ASYNC.md`
+  - `~/.config/opencode/skills/delegacion-async-opencode/SKILL.md`
 - state: `~/.local/state/opencode-addons/opencode-background-tasks/state.json`
 - marker de adopción: `~/.opencode/.opencode-background-addon.json`
 - runtime administrado: `~/.opencode/bin/opencode-managed-runtime`
@@ -136,6 +141,8 @@ Esta rama también concentra el source-of-truth de la capa async/background que 
 - `plugin/background-agents-tui/index.ts`
 - `PLAYBOOK-ASYNC.md`
 - `skills/delegacion-async-opencode/SKILL.md`
+
+El lifecycle del addon ahora instala también esos assets auxiliares en `~/.config/opencode/`, de modo que la funcionalidad background quede distribuible sin depender de que el stack base siga versionándolos.
 
 La idea es que esta rama quede lista para luego mergearse tanto con `main` como con `sync-super-turing-background-clean`.
 

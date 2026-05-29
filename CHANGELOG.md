@@ -9,6 +9,7 @@
 - `adopt-local-install` ahora hace que un `--bun-path` explícito también quede disponible en `PATH` para postinstall/build steps del checkout fuente
 - el sidebar nativo de background ahora incluye también delegaciones autónomas, no solo corridas same-session
 - en `1.14.46`, `1.14.48`, `1.14.49` y `1.15.0`, los atajos async siguen plugin-side y el sidebar visible mantiene el apoyo en patch host por estabilidad
+- el addon instala también `PLAYBOOK-ASYNC.md` y `skills/delegacion-async-opencode/SKILL.md` para que la distribución background sea autosuficiente fuera del stack base
 
 ## 0.1.0-alpha.1
 

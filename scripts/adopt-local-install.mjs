@@ -3,7 +3,7 @@ import { fail, runCli } from "../lib/cli.mjs";
 import { loadState, saveState } from "../lib/state.mjs";
 import { detectOpencodeTarget } from "../lib/detect-opencode.mjs";
 import { ensureCompatibleMode } from "../lib/compat.mjs";
-import { inspectPlugin } from "../lib/plugin.mjs";
+import { inspectManagedFile } from "../lib/plugin.mjs";
 import {
   adoptManagedLocalInstall,
   backupStorageRoots,
@@ -81,9 +81,18 @@ await runCli("adopt-local-install", async (options) => {
   const plugins = await Promise.all(
     manifest.plugins.map(async (plugin) => ({
       plugin,
-      status: await inspectPlugin(
+      status: await inspectManagedFile(
         plugin.sourcePath,
         plugin.installedPath,
+      ),
+    })),
+  );
+  const assets = await Promise.all(
+    manifest.assets.map(async (asset) => ({
+      asset,
+      status: await inspectManagedFile(
+        asset.sourcePath,
+        asset.installedPath,
       ),
     })),
   );
@@ -95,6 +104,16 @@ await runCli("adopt-local-install", async (options) => {
         details: plugins.map(({ plugin, status }) => `${plugin.manifest.id}: ${status.state}`),
       },
       plugins.some(({ status }) => status.state === "modified") ? 3 : 2,
+    );
+  }
+  if (assets.some(({ status }) => status.state !== "installed")) {
+    fail(
+      {
+        message:
+          "managed-local-install requiere que todos los assets auxiliares del addon background ya estén instalados. Corré enable --opencode-root sobre el mismo checkout fuente antes de adoptar la instalación local.",
+        details: assets.map(({ asset, status }) => `${asset.manifest.id}: ${status.state}`),
+      },
+      assets.some(({ status }) => status.state === "modified") ? 3 : 2,
     );
   }
 
@@ -206,6 +225,14 @@ await runCli("adopt-local-install", async (options) => {
       installedHash: status.installedHash,
       state: status.state,
     })),
+    assets: assets.map(({ asset, status }) => ({
+      id: asset.manifest.id,
+      sourcePath: asset.sourcePath,
+      installedPath: asset.installedPath,
+      sourceHash: status.sourceHash,
+      installedHash: status.installedHash,
+      state: status.state,
+    })),
   };
 
   if (!options.dryRun) {
@@ -222,6 +249,7 @@ await runCli("adopt-local-install", async (options) => {
       `backup: ${backupPath}`,
       `checkout: ${sourceTarget.root}`,
       `plugins: ${plugins.map(({ plugin, status }) => `${plugin.manifest.id}=${status.state}`).join(", ")}`,
+      `assets: ${assets.map(({ asset, status }) => `${asset.manifest.id}=${status.state}`).join(", ") || "none"}`,
       `bun: ${bunPath}`,
       `source runtime binary: ${runtimeBinary.binaryPath}`,
       `managed runtime binary: ${result.runtimeBinaryPath}`,

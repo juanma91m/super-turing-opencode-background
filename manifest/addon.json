@@ -22,6 +22,18 @@
       ]
     }
   ],
+  "assets": [
+    {
+      "id": "async-playbook",
+      "source": "PLAYBOOK-ASYNC.md",
+      "installPath": "PLAYBOOK-ASYNC.md"
+    },
+    {
+      "id": "delegacion-async-skill",
+      "source": "skills/delegacion-async-opencode/SKILL.md",
+      "installPath": "skills/delegacion-async-opencode/SKILL.md"
+    }
+  ],
   "patches": {
     "opencode": {
       "1.14.39": "patches/opencode/1.14.39.patch",
