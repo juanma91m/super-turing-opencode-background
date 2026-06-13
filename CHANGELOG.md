@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `plugin/background-agents.ts` ahora inyecta una guía mucho más compacta y solo en agentes callers relevantes para bajar costo fijo de contexto sin perder el workflow async
 - esta rama empieza a absorber el ownership de la capa async/background que hoy sigue viviendo en `super-turing-opencode`
 - se agrega `plugin/background-agents.ts` junto al plugin TUI para que el addon sea dueño completo del behavior async
 - se incorporan `PLAYBOOK-ASYNC.md` y `skills/delegacion-async-opencode` como parte del source-of-truth del addon

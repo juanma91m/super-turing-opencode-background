@@ -2683,95 +2683,27 @@ const DELEGATION_RULES = `<task-notification>
 
 ## Async Background Delegation
 
-You have tools for parallel background work:
-- \`delegate(prompt, agent)\` - Launch a background task and get an ID immediately
-- \`delegate_isolated(prompt, agent, name?)\` - Launch write-capable work in an isolated worktree for manual review
-- \`same_session_task_list()\` - List same-session background tasks visible in the current logical session
-- \`same_session_task_read({ task })\` - Inspect one same-session background task by number or id
-- \`delegation_open(id)\` - Jump into the child session when it exists
-- \`delegation_read(id)\` - Retrieve the full persisted result
-- \`delegation_tail(id)\` - Retrieve only new incremental output/status from a running delegation
-- \`delegation_list()\` - List delegations (use sparingly)
-- \`delegation_cancel(id | all=true)\` - Cancel pending or running delegations
-- \`delegation_continue(id, prompt)\` - Continue a completed read-only delegation in the same session
-- \`delegation_apply(id)\` - Apply an accepted isolated delegation to the main workspace
-- \`delegation_accept(id)\` - Mark an isolated write delegation as accepted after review
-- \`delegation_discard(id)\` - Discard an isolated write delegation and remove its worktree
+Usá delegaciones solo cuando el paralelismo o la visibilidad en Background Tasks agreguen valor real.
 
-## When to Use delegate vs task
+- \`delegate(prompt, agent)\`: trabajo read-only en background con resultado persistido.
+- \`delegate_isolated(prompt, agent, name?)\`: trabajo write-capable aislado, solo con review manual posterior.
+- \`delegation_read/tail/open\`: inspeccionar resultado, progreso o sesión hija.
+- \`same_session_task_list/read\`: inspeccionar tareas same-session visibles como #1, #2, etc.
 
-| Tool | Behavior | Use When |
-|------|----------|----------|
-| \`delegate\` | Async, background, persisted to disk | Read-only work where you can continue productively while it runs |
-| \`delegate_isolated\` | Async, isolated OpenCode worktree, persisted diff artifacts | master-dev needs parallel implementation without touching the main workspace |
-| \`task\` | Synchronous, blocks until complete | You need the result before continuing, or the work can write/edit/execute with risk |
+Reglas críticas:
+- si el usuario pide Background Tasks / Delegations visibles, preferí \`delegate\` o \`delegate_isolated\`, no \`task\`.
+- \`delegate\` es solo para targets read-only; nunca lo uses para implementación.
+- \`delegate_isolated\` no auto-mergea: revisá artefactos y recién después usá \`delegation_accept/apply/discard\`.
+- el prompt delegado debe ser autosuficiente: objetivo, por qué, scope, evidencia relevante, paths exactos, salida esperada y budget de salida.
+- no hagas polling de \`delegation_list()\` en loop ni te quedes esperando si podés seguir trabajando.
+- si una delegación deja conocimiento durable, guardá memoria curada; no persistas output crudo.
 
-## Background Tasks Sidebar Rule
-
-- If the user explicitly asks that the work appear in **Background Tasks** / **Delegations**, prefer \`delegate\` (or \`delegate_isolated\` for isolated write work).
-- Do **NOT** rely on the generic \`task\` tool for this UX requirement: normal subagent/task sessions may show up as child sessions, but they are not guaranteed to appear in the addon's Background Tasks sidebar.
-- Use \`task\` only when you need its synchronous/blocking behavior and sidebar visibility is not a requirement.
-
-## Critical Constraints
-
-- \`delegate\` is ONLY for read-only target agents.
-- \`delegate\` is restricted by caller/target policy and max nested depth 1.
-- Approved nested read-only paths: master-dev -> any specialist/read-only agent; frontend/backend -> explorer or code-inspector; ui-web-designer -> explorer; reviewer -> code-inspector.
-- Never use \`delegate\` for write-capable implementation work.
-- \`delegate_isolated\` is restricted to master-dev and allowed write-capable targets. It never auto-merges; review artifacts first.
-- \`delegation_apply\` is restricted to master-dev, requires an \`accepted\` isolated delegation, and requires a clean main workspace.
-- \`delegation_accept\` and \`delegation_discard\` are also restricted to master-dev.
-- If a delegation result contains durable knowledge, save a curated summary to the durable memory backend with \`mem_save\` instead of storing the raw output there.
-
-## Context Contract (MANDATORY)
-
-When calling \`delegate\`, the prompt you send MUST include enough context for an isolated worker to act correctly.
-
-Include, when relevant:
-- Objective: what exactly the delegated agent must do
-- Why: why this matters now
-- Scope: what is in and out of scope
-- Relevant facts/evidence already known
-- Exact file paths, directories, or artifacts to inspect
-- Relevant durable memory references or memory findings if they matter
-- Expected output shape (bullets, report, checklist, etc.)
-- Output budget (for example: max 5 bullets, max 15 lines, or concise only)
-
-Do NOT assume the delegated agent can infer hidden context from the parent conversation.
-
-## How It Works
-
-1. Call \`delegate(prompt, agent)\`
-2. Continue productive work while it runs in the background
-3. Receive a compact notification with ID and status only
-4. Use \`delegation_open(id)\` to jump into the child session, \`delegation_tail(id)\` for incremental progress, and \`delegation_read(id)\` when you need the full result
-
-For same-session background runs identified by sidebar numbers like #1, #2 or #3:
-- use \`same_session_task_list()\` to list them,
-- use \`same_session_task_read({ task: "3" })\` to inspect one of them.
-
-For \`delegate_isolated\`, wait for \`review_pending\`, then inspect the persisted summary, worktree path, changed files, and \`diff.patch\`.
-After review:
-- use \`delegation_accept(id)\` to keep the reviewed worktree for manual integration later,
-- use \`delegation_apply(id)\` only after acceptance, when the main workspace is clean and you want to apply the stored diff without committing,
-- use \`delegation_discard(id)\` to remove the worktree and close it out.
-
-On isolated \`error\` or \`timeout\`, the plugin attempts automatic worktree cleanup and preserves artifacts for audit.
-
-## Anti-patterns
-
-- NEVER poll \`delegation_list()\` in a loop while waiting.
-- NEVER sit idle waiting for a background task if there is other productive work to do.
-- NEVER assume the compact notification contains the full result.
-- NEVER forget that \`delegation_continue\` is for read-only follow-up, not for restarting isolated write review/apply flow.
-- NEVER send vague prompts like "inspect this" or "continue from before" without explicit context.
-- NEVER ask for a long open-ended report when a short decision-support artifact would do.
-- NEVER use \`delegate_isolated\` as a way to bypass review, tests, or ownership of final integration.
-- NEVER use \`delegation_apply\` on a dirty main workspace.
-- NEVER choose \`task\` if the user explicitly asked for a visible Background Tasks / Delegations entry.
+Para el lifecycle completo y la review segura, apoyate en la skill \`delegacion-async-opencode\`.
 
 </delegation-system>
 </task-notification>`
+
+const DELEGATION_RULE_AGENTS = new Set(["plan", "planner", "build", "master-dev", "agent-design"])
 
 interface SystemTransformInput {
   agent?: string
@@ -2808,7 +2740,8 @@ export const BackgroundAgents: Plugin = async (ctx) => {
       delegate_isolated: createDelegateIsolated(manager),
     },
 
-    "experimental.chat.system.transform": async (_input: SystemTransformInput, output) => {
+    "experimental.chat.system.transform": async (input: SystemTransformInput, output) => {
+      if (!input.agent || !DELEGATION_RULE_AGENTS.has(input.agent)) return
       const combined = [...output.system, DELEGATION_RULES].join("\n\n---\n\n")
       output.system = [combined]
     },
