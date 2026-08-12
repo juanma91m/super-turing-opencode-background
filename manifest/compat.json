@@ -4,8 +4,7 @@
     "supportModel": "mode-based",
     "requiredMarkers": [
       "packages/opencode/package.json",
-      "packages/plugin/src/tui.ts",
-      "packages/opencode/src/cli/cmd/tui/routes/session/index.tsx"
+      "packages/plugin/src/tui.ts"
     ],
     "hostHooks": [
       {
@@ -50,7 +49,7 @@
         "supportLevel": "alpha-source-checkout-only",
         "requiresPatch": true,
         "requiresCleanWorktree": true,
-        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42", "1.14.46", "1.14.48", "1.14.49", "1.15.0", "1.15.3", "1.15.6", "1.15.13", "1.16.2"],
+        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42", "1.14.46", "1.14.48", "1.14.49", "1.15.0", "1.15.3", "1.15.6", "1.15.13", "1.16.2", "1.17.15", "1.17.20"],
         "supportedDetectionMethods": [
           "source-checkout-explicit",
           "source-checkout-cwd"
@@ -76,7 +75,7 @@
         "requiresPatch": false,
         "requiresCleanWorktree": false,
         "requiresCheckoutSource": true,
-        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42", "1.14.46", "1.14.48", "1.14.49", "1.15.0", "1.15.3", "1.15.6", "1.15.13", "1.16.2"],
+        "supportedVersions": ["1.14.39", "1.14.41", "1.14.42", "1.14.46", "1.14.48", "1.14.49", "1.15.0", "1.15.3", "1.15.6", "1.15.13", "1.16.2", "1.17.15", "1.17.20"],
         "supportedDetectionMethods": ["curl-binary"],
         "notes": "Managed takeover of a local curl-based install with full backup and restore."
       }
