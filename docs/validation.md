@@ -75,6 +75,7 @@ Expected result:
 - `managedLocalInstall.runtimeBinaryPath` points inside `~/.opencode/bin/`
 - `managedLocalInstall.launcher.matchesExpected` is `true`
 - `managedLocalInstall.problems` is empty
+- `managedLocalInstall.auxiliaryBinEntries` has no entries with `ok: false`
 - the launcher keeps working without needing the original checkout path at runtime
 
 To verify that the launcher is not tied to a temporary checkout, inspect it directly:

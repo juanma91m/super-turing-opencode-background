@@ -107,6 +107,7 @@ Esto:
 - hace backup de storage relevante del usuario
 - copia el runtime administrado a `~/.opencode/bin/opencode-managed-runtime`
 - deja `~/.opencode/bin/opencode` como launcher del add-on
+- preserva otros binarios auxiliares existentes en `~/.opencode/bin/` copiando su contenido real en vez de apuntarlos al backup
 
 ### 3. Validar la instalación adoptada
 
@@ -126,6 +127,7 @@ Esperado después de una adopción sana:
 - `managed-local-install: adopted`
 - `runtimeBinaryPath` apunta dentro de `~/.opencode/bin/`
 - el launcher ya no referencia `/tmp`
+- `auxiliaryBinEntries` no reporta symlinks rotos
 - el comando instalado devuelve una build del add-on del estilo `0.0.0--<timestamp>`
 
 Ejemplo de validación fresca del lifecycle:

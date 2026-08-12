@@ -32,6 +32,7 @@ En `managed-local-install`, el add-on:
 - respalda `~/.opencode` completo
 - instala un launcher administrado por el add-on
 - persiste un runtime propio en `~/.opencode/bin/opencode-managed-runtime`
+- preserva binarios auxiliares existentes en `~/.opencode/bin/` copiándolos/dereferenciándolos, para no dejar symlinks hacia backups efímeros
 - usa la DB real del usuario mediante `OPENCODE_DB`
 
 ## Estado actual
@@ -106,6 +107,7 @@ Garantías principales del lifecycle actual:
 - state: `~/.local/state/opencode-addons/opencode-background-tasks/state.json`
 - marker de adopción: `~/.opencode/.opencode-background-addon.json`
 - runtime administrado: `~/.opencode/bin/opencode-managed-runtime`
+- binarios auxiliares preservados desde el install previo: otras entradas de `~/.opencode/bin/` distintas de `opencode` y `opencode-managed-runtime`
 
 ## Comandos del lifecycle
 

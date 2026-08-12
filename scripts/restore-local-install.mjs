@@ -15,6 +15,7 @@ function restoreBlockingProblems(inspection) {
     "marker_runtime_mismatch",
     "marker_storage_mismatch",
     "marker_checkout_version_mismatch",
+    "auxiliary_bin_broken",
   ]);
   return (inspection.problems || []).filter((problem) => !allowed.has(problem));
 }
