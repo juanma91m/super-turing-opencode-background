@@ -377,6 +377,91 @@ index fe7f4a2..c0b0ac5 100644
        if (editorParts.length > 0) editor.preserveSelectionFromNewSession()
        setTimeout(() => {
          route.navigate({
+diff --git a/packages/tui/src/context/local.tsx b/packages/tui/src/context/local.tsx
+index a05d315..95a5af8 100644
+--- a/packages/tui/src/context/local.tsx
++++ b/packages/tui/src/context/local.tsx
+@@ -48,6 +48,41 @@ export function recentModels(
+     .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
+ }
+ 
++export function agentModelVariantKey(
++  agentName: string | undefined,
++  model: { providerID: string; modelID: string } | undefined,
++) {
++  if (!agentName || !model) return undefined
++  return `${agentName}/${model.providerID}/${model.modelID}`
++}
++
++export function configuredAgentVariant(
++  agent: { variant?: string; model?: { providerID: string; modelID?: string; id?: string } } | undefined,
++  model: { providerID: string; modelID: string } | undefined,
++) {
++  if (!agent?.variant || !agent.model || !model) return undefined
++  const agentModelID = agent.model.modelID ?? agent.model.id
++  if (agent.model.providerID !== model.providerID || agentModelID !== model.modelID) return undefined
++  return agent.variant
++}
++
++export function selectModelVariant(input: {
++  agent?: { name?: string; variant?: string; model?: { providerID: string; modelID?: string; id?: string } }
++  model?: { providerID: string; modelID: string }
++  variants: string[]
++  overrides: Record<string, string | undefined>
++}) {
++  const key = agentModelVariantKey(input.agent?.name, input.model)
++  const selected = key ? input.overrides[key] : undefined
++  const configured = configuredAgentVariant(input.agent, input.model)
++  const current = selected ?? configured
++  return {
++    selected,
++    configured,
++    current: current && input.variants.includes(current) ? current : undefined,
++  }
++}
++
+ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+   name: "Local",
+   init: () => {
+@@ -360,17 +395,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+           })
+         },
+         variant: {
++          selection() {
++            return selectModelVariant({
++              agent: agent.current(),
++              model: currentModel(),
++              variants: this.list(),
++              overrides: modelStore.variant,
++            })
++          },
+           selected() {
+-            const m = currentModel()
+-            if (!m) return undefined
+-            const key = `${m.providerID}/${m.modelID}`
+-            return modelStore.variant[key]
++            const selection = this.selection()
++            return selection.selected ?? selection.current
+           },
+           current() {
+-            const v = this.selected()
+-            if (!v) return undefined
+-            if (!this.list().includes(v)) return undefined
+-            return v
++            return this.selection().current
+           },
+           list() {
+             const m = currentModel()
+@@ -383,7 +421,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+           set(value: string | undefined) {
+             const m = currentModel()
+             if (!m) return
+-            const key = `${m.providerID}/${m.modelID}`
++            const key = agentModelVariantKey(agent.current()?.name, m)
++            if (!key) return
+             setModelStore("variant", key, value ?? "default")
+             save()
+           },
 diff --git a/packages/tui/src/feature-plugins/builtins.ts b/packages/tui/src/feature-plugins/builtins.ts
 index b67923f..af9068a 100644
 --- a/packages/tui/src/feature-plugins/builtins.ts
@@ -1716,6 +1801,92 @@ index 61abe4a..c19c1ee 100644
                  </box>
                </Match>
              </Switch>
+diff --git a/packages/tui/test/context/local.test.ts b/packages/tui/test/context/local.test.ts
+index e2f1e45..27f9aee 100644
+--- a/packages/tui/test/context/local.test.ts
++++ b/packages/tui/test/context/local.test.ts
+@@ -1,5 +1,5 @@
+ import { expect, test } from "bun:test"
+-import { parseModel, recentModels } from "../../src/context/local"
++import { agentModelVariantKey, configuredAgentVariant, parseModel, recentModels, selectModelVariant } from "../../src/context/local"
+ 
+ test("parses model IDs containing slashes", () => {
+   expect(parseModel("provider/family/model")).toEqual({
+@@ -20,3 +20,74 @@ test("moves a model to the front, deduplicates, and limits recents", () => {
+     ...recent.slice(6, 10),
+   ])
+ })
++
++test("keys model variant overrides by agent and model", () => {
++  expect(agentModelVariantKey("reviewer", { providerID: "openai", modelID: "gpt-5" })).toBe("reviewer/openai/gpt-5")
++  expect(agentModelVariantKey(undefined, { providerID: "openai", modelID: "gpt-5" })).toBeUndefined()
++})
++
++test("uses the configured agent variant only for the agent model", () => {
++  const agent = {
++    variant: "medium",
++    model: {
++      providerID: "openai",
++      modelID: "gpt-5",
++    },
++  }
++
++  expect(configuredAgentVariant(agent, { providerID: "openai", modelID: "gpt-5" })).toBe("medium")
++  expect(configuredAgentVariant(agent, { providerID: "openai", modelID: "other" })).toBeUndefined()
++})
++
++test("does not leak a variant override between agents sharing a model", () => {
++  const model = { providerID: "openai", modelID: "gpt-5" }
++  const variants = ["low", "medium", "high"]
++  const overrides = {
++    "master-dev/openai/gpt-5": "high",
++  }
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "master-dev",
++        variant: "high",
++        model,
++      },
++      model,
++      variants,
++      overrides,
++    }).current,
++  ).toBe("high")
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "code-inspector",
++        variant: "medium",
++        model,
++      },
++      model,
++      variants,
++      overrides,
++    }).current,
++  ).toBe("medium")
++})
++
++test("allows default to override the configured agent variant", () => {
++  const model = { providerID: "openai", modelID: "gpt-5" }
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "code-inspector",
++        variant: "medium",
++        model,
++      },
++      model,
++      variants: ["low", "medium", "high"],
++      overrides: {
++        "code-inspector/openai/gpt-5": "default",
++      },
++    }).current,
++  ).toBeUndefined()
++})
 diff --git a/packages/tui/test/fixture/tui-plugin.ts b/packages/tui/test/fixture/tui-plugin.ts
 index e9fce42..75b2b51 100644
 --- a/packages/tui/test/fixture/tui-plugin.ts
