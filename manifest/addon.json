@@ -48,7 +48,8 @@
       "1.15.13": "patches/opencode/1.15.13.patch",
       "1.16.2": "patches/opencode/1.16.2.patch",
       "1.17.15": "patches/opencode/1.17.15.patch",
-      "1.17.20": "patches/opencode/1.17.15.patch"
+      "1.17.20": "patches/opencode/1.17.15.patch",
+      "1.18.17": "patches/opencode/1.18.17.patch"
     }
   },
   "state": {
