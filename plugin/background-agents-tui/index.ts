@@ -1432,7 +1432,6 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     sessionID: string,
     request: {
       sessionID?: string;
-      messageID: string;
       input: string;
       mode?: "normal" | "shell";
       parts: any[];
