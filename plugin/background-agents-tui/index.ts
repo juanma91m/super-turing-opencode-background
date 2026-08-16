@@ -2,7 +2,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createElement } from "@opentui/solid";
+import {
+  createElement,
+  createTextNode,
+  insert,
+  spread,
+} from "@opentui/solid";
 import { createSignal } from "solid-js";
 import type { Message, Part, TextPartInput } from "@opencode-ai/sdk/v2";
 import type {
@@ -156,6 +161,8 @@ type ShortcutRepeatState = {
   at: number;
 };
 
+type TuiRenderable = ReturnType<typeof createElement>;
+
 const POLL_INTERVAL_MS = 2500;
 const TOASTABLE_STATUSES = new Set([
   "complete",
@@ -169,7 +176,6 @@ const TOASTABLE_STATUSES = new Set([
 ]);
 const SESSION_STATE_PREFIX = "background-agents-tui";
 const MAX_TRACKED_SESSION_RUNS = 25;
-const SIDEBAR_BG_COLLAPSED_KEY = `${SESSION_STATE_PREFIX}:sidebar:collapsed`;
 const SEQUENCE_REPEAT_WINDOW_MS = 900;
 
 function hashString(input: string): string {
@@ -178,6 +184,20 @@ function hashString(input: string): string {
 
 function randomToken(): string {
   return crypto.randomBytes(6).toString("hex");
+}
+
+function createTuiElement(
+  tag: string,
+  props: Record<string, unknown>,
+  ...children: Array<TuiRenderable | string | null>
+): TuiRenderable {
+  const element = createElement(tag);
+  spread(element, props);
+  for (const child of children) {
+    if (child === null) continue;
+    insert(element, typeof child === "string" ? createTextNode(child) : child);
+  }
+  return element;
 }
 
 function normalizePositiveInt(value: unknown): number | undefined {
@@ -387,48 +407,23 @@ function displayTaskTitle(item: TaskRecord, icon: string): string {
   return sequence ? `${icon} #${sequence} - ${summary}` : `${icon} ${summary}`;
 }
 
+function displaySidebarTaskTitle(item: TaskRecord, icon: string): string {
+  const fallback =
+    item.source === "delegation"
+      ? "Delegación background"
+      : "Tarea en background";
+  const summary =
+    summarize(normalizeDisplaySummary(item.title) || fallback, 25) || fallback;
+  const sequence =
+    normalizePositiveInt(item.displaySequence) ||
+    normalizePositiveInt(item.sequence);
+  return sequence ? `${icon} #${sequence} — ${summary}` : `${icon} ${summary}`;
+}
+
 function toIsoTime(value?: number | string): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") return value;
   return new Date(value).toISOString();
-}
-
-function buildSidebarSections(input: {
-  snapshot: Snapshot;
-  collapsed: boolean;
-  onToggle: () => void;
-  onOpenTasks: () => void;
-  onTaskSelect: (item: TaskRecord) => void;
-}) {
-  const ordered = input.snapshot.items.slice().sort(compareTaskDialogOrder);
-  const visibleItems = ordered.slice(-5).reverse();
-  const hiddenCount = Math.max(ordered.length - visibleItems.length, 0);
-  return [
-    {
-      id: "background-tasks",
-      title: "Background Tasks",
-      priority: 350,
-      compact: true,
-      collapsed: input.collapsed,
-      onToggle: input.onToggle,
-      items: visibleItems.map((item) => {
-        const presentation = getStatusPresentation(item.status);
-        return {
-          id: item.id,
-          title: displayTaskTitle(item, presentation.icon),
-          onSelect: () => input.onTaskSelect(item),
-        };
-      }),
-      emptyState: "No background tasks for this session.",
-      hint:
-        hiddenCount > 0
-          ? {
-              text: `+${hiddenCount} more · /bg-tasks`,
-              onSelect: input.onOpenTasks,
-            }
-          : undefined,
-    },
-  ];
 }
 
 function supportsKeymapApi(api: Parameters<TuiPlugin>[0]): boolean {
@@ -1119,16 +1114,6 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         resolveShellSessionID(shellSessionID) || shellSessionID,
       activeSessionID,
       visibleMessages,
-      sidebarSections: buildSidebarSections({
-        snapshot: snapshot(),
-        collapsed: sidebarCollapsed(),
-        onToggle: toggleSidebarCollapsed,
-        onOpenTasks: openTasksDialog,
-        onTaskSelect: (item: TaskRecord) => {
-          resetInspectionInterrupt();
-          void handleTaskSelect(item);
-        },
-      }),
       promptTargetSessionID,
       promptVisible:
         (isTechnicalForeground || !routeSession?.parentID) &&
@@ -2065,21 +2050,80 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     );
   };
 
-  const getSidebarCollapsed = () =>
-    api.kv.ready ? Boolean(api.kv.get(SIDEBAR_BG_COLLAPSED_KEY, false)) : sidebarCollapsed();
-
-  const updateSidebarCollapsed = (next: boolean) => {
-    setSidebarCollapsed(next);
-    if (api.kv.ready) api.kv.set(SIDEBAR_BG_COLLAPSED_KEY, next);
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((value) => !value);
     api.renderer.requestRender();
   };
 
-  if (api.kv.ready) {
-    setSidebarCollapsed(Boolean(api.kv.get(SIDEBAR_BG_COLLAPSED_KEY, false)));
-  }
+  const renderSidebarBackgroundTasks = () => {
+    const theme = api.theme.current;
+    const ordered = snapshot().items.slice().sort(compareTaskDialogOrder);
+    const visibleItems = ordered.slice(-5).reverse();
+    const hiddenCount = Math.max(ordered.length - visibleItems.length, 0);
+    const content = sidebarCollapsed()
+      ? []
+      : visibleItems.length === 0
+        ? [
+            createTuiElement(
+              "text",
+              { fg: theme.textMuted },
+              "No background tasks for this session.",
+            ),
+          ]
+        : [
+            ...visibleItems.map((item) => {
+              const presentation = getStatusPresentation(item.status);
+              return createTuiElement(
+                "box",
+                {
+                  flexDirection: "column",
+                  onMouseUp: () => {
+                    resetInspectionInterrupt();
+                    void handleTaskSelect(item);
+                  },
+                },
+                createTuiElement(
+                  "text",
+                  { fg: theme.text, wrapMode: "word" },
+                  displaySidebarTaskTitle(item, presentation.icon),
+                ),
+              );
+            }),
+            hiddenCount > 0
+              ? createTuiElement(
+                  "text",
+                  {
+                    fg: theme.textMuted,
+                    onMouseDown: openTasksDialog,
+                  },
+                  `+${hiddenCount} more · /bg-tasks`,
+                )
+              : null,
+          ];
 
-  const toggleSidebarCollapsed = () => {
-    updateSidebarCollapsed(!getSidebarCollapsed());
+    return createTuiElement(
+      "box",
+      { flexDirection: "column" },
+      createTuiElement(
+        "box",
+        {
+          flexDirection: "row",
+          gap: 1,
+          onMouseDown: toggleSidebarCollapsed,
+        },
+        createTuiElement(
+          "text",
+          { fg: theme.text },
+          sidebarCollapsed() ? "▶" : "▼",
+        ),
+        createTuiElement(
+          "text",
+          { fg: theme.text },
+          createTuiElement("b", {}, "Background Tasks"),
+        ),
+      ),
+      ...content,
+    );
   };
 
   const backgroundCurrentRun = async () => {
@@ -2447,6 +2491,24 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         lastRawEscapeAt = now;
       })
     : () => {};
+
+  const pluginManager = (api as any).plugins;
+  const hostOwnsBackgroundSidebar =
+    typeof pluginManager?.list !== "function" ||
+    pluginManager
+      .list()
+      .some(
+        (plugin: { id?: string }) =>
+          plugin.id === "internal:sidebar-background-tasks",
+      );
+  if (!hostOwnsBackgroundSidebar) {
+    api.slots.register({
+      order: 350,
+      slots: {
+        sidebar_content: () => renderSidebarBackgroundTasks() as any,
+      },
+    });
+  }
 
   api.slots.register({
     order: 1000,

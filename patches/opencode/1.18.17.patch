@@ -462,26 +462,6 @@ index a05d315..95a5af8 100644
              setModelStore("variant", key, value ?? "default")
              save()
            },
-diff --git a/packages/tui/src/feature-plugins/builtins.ts b/packages/tui/src/feature-plugins/builtins.ts
-index b67923f..af9068a 100644
---- a/packages/tui/src/feature-plugins/builtins.ts
-+++ b/packages/tui/src/feature-plugins/builtins.ts
-@@ -1,6 +1,7 @@
- import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
- import HomeFooter from "./home/footer"
- import HomeTips from "./home/tips"
-+import SidebarBackgroundTasks from "./sidebar/background-tasks"
- import SidebarContext from "./sidebar/context"
- import SidebarFiles from "./sidebar/files"
- import SidebarFooter from "./sidebar/footer"
-@@ -22,6 +23,7 @@ export function createBuiltinPlugins(options: { experimentalEventSystem: boolean
-   return [
-     HomeFooter,
-     HomeTips,
-+    SidebarBackgroundTasks,
-     SidebarContext,
-     SidebarMcp,
-     SidebarLsp,
 diff --git a/packages/tui/src/feature-plugins/sidebar/background-tasks.tsx b/packages/tui/src/feature-plugins/sidebar/background-tasks.tsx
 new file mode 100644
 index 0000000..56e9939
