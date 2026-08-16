@@ -1055,6 +1055,44 @@ class DelegationManager {
 
     const messages = await this.getSessionMessages(task.sessionID)
     const selected = this.collectSameSessionTaskMessages(messages, task)
+    const messageIDs = new Set(selected.map((message) => message.info?.id).filter((id): id is string => typeof id === "string"))
+    const pendingInput = await this.getSessionPendingInput(task.sessionID)
+    const isOnlyTaskInSession = tasks.filter((item) => item.source === "session-run" && item.sessionID === task.sessionID).length === 1
+    const belongsToTask = (request: any) => {
+      const messageID = request?.source?.messageID ?? request?.tool?.messageID
+      if (typeof messageID === "string") return messageIDs.has(messageID) || messageID === task.assistantMessageID
+      return isOnlyTaskInSession
+    }
+    const permissions = pendingInput.permissions.filter(belongsToTask)
+    const questions = pendingInput.questions.filter(belongsToTask)
+    const assistant = selected.findLast((message) => message.info?.role === "assistant")
+    const status =
+      permissions.length > 0 || questions.length > 0
+        ? "needs_input"
+        : assistant?.info?.error
+          ? "error"
+          : assistant?.info?.time?.completed
+            ? "done"
+            : assistant
+              ? "running"
+              : "queued"
+    const pendingLines = [
+      `**Status:** ${status}`,
+      permissions.length > 0 || questions.length > 0
+        ? `**Waiting for user:** yes`
+        : pendingInput.complete
+          ? `**Waiting for user:** no pending permission or question detected`
+          : `**Waiting for user:** unknown (pending-input status could not be read)`,
+      ...permissions.map((request) => {
+        const resources = Array.isArray(request.resources) && request.resources.length > 0 ? ` — ${summarize(request.resources.join(", "), 240)}` : ""
+        return `- Pending permission: ${request.action || request.permission || "unknown"}${resources}`
+      }),
+      ...questions.flatMap((request) =>
+        Array.isArray(request.questions)
+          ? request.questions.map((question: any) => `- Pending question: ${summarize(question.question || question.header || "User response required", 240)}`)
+          : [],
+      ),
+    ]
     const rendered = this.renderMessages(selected)
     return [
       `## Same-session task #${task.displaySequence ?? task.sequence ?? "?"}`,
@@ -1062,6 +1100,7 @@ class DelegationManager {
       `**Session:** ${task.sessionID}`,
       `**Task ID:** ${task.id}`,
       `**Title:** ${task.title}`,
+      ...pendingLines,
       ``,
       rendered || "(No messages found for this task)",
     ].join("\n")
@@ -1070,6 +1109,24 @@ class DelegationManager {
   private async getSessionMessages(sessionID: string): Promise<Array<{ info?: any; parts?: Part[] }>> {
     const messages = await this.client.session.messages({ path: { id: sessionID } })
     return (messages?.data ?? []) as Array<{ info?: any; parts?: Part[] }>
+  }
+
+  private async getSessionPendingInput(sessionID: string): Promise<{ permissions: any[]; questions: any[]; complete: boolean }> {
+    const [permissionResult, questionResult] = await Promise.allSettled([
+      Promise.resolve().then(() => this.worktreeClient.session.permission.list({ sessionID })),
+      Promise.resolve().then(() => this.worktreeClient.session.question.list({ sessionID })),
+    ])
+    const items = (result: PromiseSettledResult<any>) => {
+      if (result.status !== "fulfilled") return []
+      const data = result.value?.data
+      if (Array.isArray(data)) return data
+      return Array.isArray(data?.data) ? data.data : []
+    }
+    return {
+      permissions: items(permissionResult),
+      questions: items(questionResult),
+      complete: permissionResult.status === "fulfilled" && questionResult.status === "fulfilled",
+    }
   }
 
   private extractPartText(part: any): string {
@@ -2666,7 +2723,7 @@ Use this when the user refers to sidebar items like #1, #2 or #3 that were sent 
 
 function createSameSessionTaskRead(manager: DelegationManager) {
   return tool({
-    description: `Read one same-session background task by sequence number or task id.
+    description: `Read one same-session background task by sequence number or task id, including whether it is waiting for a permission or question response.
 Use this when the user asks to inspect what happened inside sidebar items like #1, #2 or #3.`,
     args: {
       task: tool.schema.string().describe('Task sequence or id, for example "3" or "#3".'),

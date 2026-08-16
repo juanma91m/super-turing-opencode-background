@@ -10,7 +10,10 @@
       "id": "background-agents",
       "source": "plugin/background-agents.ts",
       "installDirName": "",
-      "installFile": "background-agents.ts"
+      "installFile": "background-agents.ts",
+      "compatibleInstalledHashes": [
+        "7001f1f40e5199cdc6e4a7e97356b5975d4711a20f8b8ef49fcef41247bb1710"
+      ]
     },
     {
       "id": "background-agents-tui",
