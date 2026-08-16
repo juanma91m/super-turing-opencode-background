@@ -2,9 +2,14 @@
   "schemaVersion": 1,
   "id": "opencode-background-tasks",
   "name": "OpenCode Background Tasks",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "channel": "alpha",
   "repositoryReady": true,
+  "distribution": {
+    "installerContract": "scripts/install.sh",
+    "preferredOpenCodeVersion": "1.18.17",
+    "sourceRepository": "https://github.com/anomalyco/opencode.git"
+  },
   "plugins": [
     {
       "id": "background-agents",

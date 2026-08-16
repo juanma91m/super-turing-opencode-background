@@ -79,6 +79,27 @@ node ./scripts/disable.mjs --opencode-root /ruta/al/opencode-checkout
 
 Usá este flujo si querés que el comando local de OpenCode quede corriendo con la UX del add-on.
 
+### Bootstrap coordinado para una máquina nueva
+
+Si la instalación local cumple los prerrequisitos de esta guía, el contrato
+estable usado por el instalador completo de `super-turing-opencode` ejecuta los
+pasos manuales de esta sección en orden:
+
+```bash
+bash scripts/install.sh
+```
+
+Opciones útiles:
+
+```bash
+bash scripts/install.sh --dry-run
+bash scripts/install.sh --workspace-dir "$HOME/.local/src"
+bash scripts/install.sh --bun-path /ruta/al/binario/bun
+```
+
+El script no descarga credenciales ni modifica configuración de cuentas. Si ya
+detecta una adopción sana e idéntica, termina sin repetir el takeover.
+
 ### Importante
 
 Este modo requiere primero preparar un checkout fuente compatible. El add-on **no** parchea directamente el ELF existente: usa ese checkout como base, compila o reutiliza un runtime compatible y después adopta `~/.opencode` como unidad completa.

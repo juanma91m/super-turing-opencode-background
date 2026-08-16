@@ -75,6 +75,18 @@ Hay dos caminos honestamente soportados:
 
 Las instrucciones paso a paso viven en [`installation.md`](./installation.md).
 
+Para un bootstrap completo sobre una instalación local compatible en Linux x64,
+el repo también expone el contrato estable usado por la distribución:
+
+```bash
+bash scripts/install.sh
+```
+
+Ese entrypoint prepara el checkout fuente de la versión preferida declarada en
+`manifest/addon.json`, ejecuta el lifecycle `enable` y adopta `~/.opencode`.
+No reemplaza los comandos de lifecycle: los coordina y mantiene su lógica dentro
+de este addon.
+
 Ahí están documentados:
 
 - prerequisitos

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- se agrega `scripts/install.sh` como contrato estable de distribución: prepara el checkout OpenCode preferido, ejecuta `enable` y adopta la instalación local sin mover esa lógica al stack base
+- `manifest/addon.json` declara versión OpenCode y repo fuente preferidos para bootstrap; versión del addon `0.1.0-alpha.2`
+
 - `plugin/background-agents.ts` ahora inyecta una guía mucho más compacta y solo en agentes callers relevantes para bajar costo fijo de contexto sin perder el workflow async
 - esta rama empieza a absorber el ownership de la capa async/background que hoy sigue viviendo en `super-turing-opencode`
 - se agrega `plugin/background-agents.ts` junto al plugin TUI para que el addon sea dueño completo del behavior async
