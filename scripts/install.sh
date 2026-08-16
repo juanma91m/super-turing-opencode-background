@@ -90,7 +90,7 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-for dependency in python3 node git; do
+for dependency in python3 node git realpath; do
   command -v "$dependency" >/dev/null 2>&1 || { printf '%s is required\n' "$dependency" >&2; exit 1; }
 done
 
