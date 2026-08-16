@@ -19,7 +19,8 @@
       "installFile": "index.ts",
       "compatibleInstalledHashes": [
         "2104f101da20e1ff7fd0711ebd87bbd31260bc0198243c748214fc9946d2b500",
-        "9bf3d6827d0f559730945ba3cb7a3b8fafec272941c532fce4a66e18d28dc16b"
+        "9bf3d6827d0f559730945ba3cb7a3b8fafec272941c532fce4a66e18d28dc16b",
+        "ccb35ac26cbea42ed5a4f1c8e7e4cea8b4411f9f5847a22ebd12ec9147515d01"
       ]
     }
   ],

@@ -1110,8 +1110,6 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     const promptState = loadSessionState(promptTargetSessionID);
 
     return {
-      canonicalSessionID:
-        resolveShellSessionID(shellSessionID) || shellSessionID,
       activeSessionID,
       visibleMessages,
       promptTargetSessionID,
