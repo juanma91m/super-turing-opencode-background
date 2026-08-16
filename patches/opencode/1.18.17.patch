@@ -26,7 +26,7 @@ index 5d93139..deabd88 100644
        Dialog: () => null,
        DialogAlert: () => null,
 diff --git a/packages/plugin/src/tui.ts b/packages/plugin/src/tui.ts
-index 6781216..8f38e47 100644
+index 6781216..d9a493c 100644
 --- a/packages/plugin/src/tui.ts
 +++ b/packages/plugin/src/tui.ts
 @@ -212,6 +212,20 @@ export type TuiPromptProps = {
@@ -61,7 +61,7 @@ index 6781216..8f38e47 100644
    home_bottom: {}
    home_footer: {}
    sidebar_title: {
-@@ -578,6 +596,55 @@ export type TuiWorkspace = {
+@@ -578,6 +596,53 @@ export type TuiWorkspace = {
    set: (workspaceID?: string) => void
  }
  
@@ -87,7 +87,6 @@ index 6781216..8f38e47 100644
 +  messagesBySession: Readonly<Record<string, ReadonlyArray<Message>>>
 +  permissionsBySession: Readonly<Record<string, ReadonlyArray<PermissionRequest>>>
 +  questionsBySession: Readonly<Record<string, ReadonlyArray<QuestionRequest>>>
-+  kv: TuiKV
 +}
 +
 +export type TuiSessionAdapter = {
@@ -99,7 +98,6 @@ index 6781216..8f38e47 100644
 +export type TuiSessionListAdapterContext = {
 +  routeCurrent: TuiRouteCurrent
 +  sessions: ReadonlyArray<TuiSessionInfo>
-+  kv: TuiKV
 +}
 +
 +export type TuiSessionListProjection = {
@@ -117,7 +115,7 @@ index 6781216..8f38e47 100644
  export type TuiPluginApi = {
    app: TuiApp
    attention: TuiAttention
-@@ -596,6 +663,10 @@ export type TuiPluginApi = {
+@@ -596,6 +661,10 @@ export type TuiPluginApi = {
      navigate: (name: string, params?: Record<string, unknown>) => void
      readonly current: TuiRouteCurrent
    }
@@ -129,24 +127,18 @@ index 6781216..8f38e47 100644
      Dialog: (props: TuiDialogProps) => JSX.Element
      DialogAlert: (props: TuiDialogAlertProps) => JSX.Element
 diff --git a/packages/tui/src/component/dialog-session-list.tsx b/packages/tui/src/component/dialog-session-list.tsx
-index c508fc6..1422991 100644
+index c508fc6..8d45664 100644
 --- a/packages/tui/src/component/dialog-session-list.tsx
 +++ b/packages/tui/src/component/dialog-session-list.tsx
-@@ -18,6 +18,8 @@ import { errorMessage } from "../util/error"
+@@ -18,6 +18,7 @@ import { errorMessage } from "../util/error"
  import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
  import { useCommandShortcut } from "../keymap"
  import { useEvent } from "../context/event"
-+import { useKV } from "../context/kv"
 +import { resolveSessionListProjection, subscribeSessionListAdapters } from "../plugin/adapters"
  
  type SessionListFilter = { scope?: "project"; path?: string }
  
-@@ -52,10 +54,12 @@ export function DialogSessionList() {
-   const event = useEvent()
-   const local = useLocal()
-   const toast = useToast()
-+  const kv = useKV()
-   const [toDelete, setToDelete] = createSignal<string>()
+@@ -56,6 +57,7 @@ export function DialogSessionList() {
    const [deleted, setDeleted] = createSignal(new Set<string>())
    const [search, setSearch] = createDebouncedSignal("", 150)
    const deleteHint = useCommandShortcut("session.delete")
@@ -154,7 +146,7 @@ index c508fc6..1422991 100644
    const quickSwitch1 = useCommandShortcut("session.quick_switch.1")
    const quickSwitch9 = useCommandShortcut("session.quick_switch.9")
  
-@@ -75,7 +79,24 @@ export function DialogSessionList() {
+@@ -75,7 +77,23 @@ export function DialogSessionList() {
      },
    )
  
@@ -169,7 +161,6 @@ index c508fc6..1422991 100644
 +            ? { name: "session", params: { sessionID: route.data.sessionID, prompt: route.data.prompt } }
 +            : { name: route.data.id, params: route.data.data },
 +      sessions: sync.data.session,
-+      kv,
 +    })
 +  })
 +  const currentSessionID = createMemo(() => {
@@ -180,7 +171,7 @@ index c508fc6..1422991 100644
    const sessions = createMemo(() => {
      const result = searchResults() ?? browseResults() ?? sync.data.session
      const synced = new Map(sync.data.session.map((session) => [session.id, session]))
-@@ -266,6 +287,8 @@ export function DialogSessionList() {
+@@ -266,6 +284,8 @@ export function DialogSessionList() {
    })
  
    onMount(() => {
@@ -189,7 +180,7 @@ index c508fc6..1422991 100644
      dialog.setSize("large")
    })
  
-@@ -281,9 +304,11 @@ export function DialogSessionList() {
+@@ -281,9 +301,11 @@ export function DialogSessionList() {
          setToDelete(undefined)
        }}
        onSelect={(option) => {
@@ -604,7 +595,7 @@ index fef0ec8..a847c4f 100644
              ref={props.ref}
              hint={props.hint}
 diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
-index 61abe4a..a49d342 100644
+index 61abe4a..afad6a0 100644
 --- a/packages/tui/src/routes/session/index.tsx
 +++ b/packages/tui/src/routes/session/index.tsx
 @@ -77,6 +77,7 @@ import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode
@@ -625,7 +616,7 @@ index 61abe4a..a49d342 100644
    const location = createMemo(() => {
      const current = session()
      return current ? { directory: current.directory, workspaceID: current.workspaceID } : undefined
-@@ -210,12 +212,70 @@ export function Session() {
+@@ -210,12 +212,69 @@ export function Session() {
        .filter((x) => x.parentID === parentID || x.id === parentID)
        .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
    })
@@ -671,7 +662,6 @@ index 61abe4a..a49d342 100644
 +      messagesBySession: sync.data.message,
 +      permissionsBySession: sync.data.permission,
 +      questionsBySession: sync.data.question,
-+      kv,
 +    })
 +    return {
 +      activeSessionID: projection?.activeSessionID ?? defaultProjection.activeSessionID,
@@ -701,7 +691,7 @@ index 61abe4a..a49d342 100644
    }
    const foregroundTasks = createMemo(() =>
      sync.data.capabilities.experimentalBackgroundSubagents
-@@ -231,14 +291,17 @@ export function Session() {
+@@ -231,14 +290,17 @@ export function Session() {
        : [],
    )
    const permissions = createMemo(() => {
@@ -724,7 +714,7 @@ index 61abe4a..a49d342 100644
    const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
  
    const pending = createMemo(() => {
-@@ -324,11 +387,18 @@ export function Session() {
+@@ -324,11 +386,18 @@ export function Session() {
      })
    })
  
@@ -744,7 +734,7 @@ index 61abe4a..a49d342 100644
      if (part.state.status !== "completed") return
      if (part.id === lastSwitch) return
  
-@@ -356,7 +426,7 @@ export function Session() {
+@@ -356,7 +425,7 @@ export function Session() {
    const renderer = useRenderer()
  
    event.on("session.status", (evt) => {
@@ -753,7 +743,7 @@ index 61abe4a..a49d342 100644
      if (evt.properties.status.type !== "retry") return
      if (!evt.properties.status.action) return
      if (dialog.stack.length > 0) return
-@@ -465,7 +535,7 @@ export function Session() {
+@@ -465,7 +534,7 @@ export function Session() {
  
    const sessionCommandList = createMemo(() => [
      {
@@ -762,7 +752,7 @@ index 61abe4a..a49d342 100644
        value: "session.share",
        suggested: route.type === "session",
        category: "Session",
-@@ -479,7 +549,7 @@ export function Session() {
+@@ -479,7 +548,7 @@ export function Session() {
              .write?.(url)
              .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
              .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
@@ -771,7 +761,7 @@ index 61abe4a..a49d342 100644
          if (url) {
            await copy(url)
            dialog.clear()
-@@ -492,7 +562,7 @@ export function Session() {
+@@ -492,7 +561,7 @@ export function Session() {
          }
          await sdk.client.session
            .share({
@@ -780,7 +770,7 @@ index 61abe4a..a49d342 100644
            })
            .then((res) => copy(res.data!.share!.url))
            .catch((error) => {
-@@ -512,7 +582,7 @@ export function Session() {
+@@ -512,7 +581,7 @@ export function Session() {
          name: "rename",
        },
        run: () => {
@@ -789,7 +779,7 @@ index 61abe4a..a49d342 100644
        },
      },
      {
-@@ -531,7 +601,7 @@ export function Session() {
+@@ -531,7 +600,7 @@ export function Session() {
                })
                if (child) scroll.scrollBy(child.y - scroll.y - 1)
              }}
@@ -798,7 +788,7 @@ index 61abe4a..a49d342 100644
              setPrompt={(promptInfo) => prompt?.set(promptInfo)}
            />
          ))
-@@ -554,7 +624,7 @@ export function Session() {
+@@ -554,7 +623,7 @@ export function Session() {
                })
                if (child) scroll.scrollBy(child.y - scroll.y - 1)
              }}
@@ -807,7 +797,7 @@ index 61abe4a..a49d342 100644
            />
          ))
        },
-@@ -578,7 +648,7 @@ export function Session() {
+@@ -578,7 +647,7 @@ export function Session() {
            return
          }
          void sdk.client.session.summarize({
@@ -816,7 +806,7 @@ index 61abe4a..a49d342 100644
            modelID: selectedModel.modelID,
            providerID: selectedModel.providerID,
          })
-@@ -589,14 +659,14 @@ export function Session() {
+@@ -589,14 +658,14 @@ export function Session() {
        title: "Unshare session",
        value: "session.unshare",
        category: "Session",
@@ -833,7 +823,7 @@ index 61abe4a..a49d342 100644
            })
            .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
            .catch((error) => {
-@@ -616,13 +686,13 @@ export function Session() {
+@@ -616,13 +685,13 @@ export function Session() {
          name: "undo",
        },
        run: async () => {
@@ -850,7 +840,7 @@ index 61abe4a..a49d342 100644
              messageID: message.id,
            })
            .then(() => {
-@@ -648,24 +718,24 @@ export function Session() {
+@@ -648,24 +717,24 @@ export function Session() {
        title: "Redo",
        value: "session.redo",
        category: "Session",
@@ -880,7 +870,7 @@ index 61abe4a..a49d342 100644
            messageID: message.id,
          })
        },
-@@ -835,7 +905,7 @@ export function Session() {
+@@ -835,7 +904,7 @@ export function Session() {
        category: "Session",
        hidden: true,
        run: () => {
@@ -889,7 +879,7 @@ index 61abe4a..a49d342 100644
          if (!messages || !messages.length) return
  
          // Find the most recent user message with non-ignored, non-synthetic text parts
-@@ -923,9 +993,9 @@ export function Session() {
+@@ -923,9 +992,9 @@ export function Session() {
        },
        run: async () => {
          try {
@@ -901,7 +891,7 @@ index 61abe4a..a49d342 100644
            const transcript = formatTranscript(
              sessionData,
              sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-@@ -953,9 +1023,9 @@ export function Session() {
+@@ -953,9 +1022,9 @@ export function Session() {
        },
        run: async () => {
          try {
@@ -913,7 +903,7 @@ index 61abe4a..a49d342 100644
  
            const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
  
-@@ -1027,7 +1097,7 @@ export function Session() {
+@@ -1027,7 +1096,7 @@ export function Session() {
        enabled: foregroundTasks().length > 0,
        run: () => {
          void sdk.client.experimental.session.background({
@@ -922,7 +912,7 @@ index 61abe4a..a49d342 100644
            workspace: project.workspace.current(),
          })
          dialog.clear()
-@@ -1038,6 +1108,7 @@ export function Session() {
+@@ -1038,6 +1107,7 @@ export function Session() {
        value: "session.child.first",
        category: "Session",
        hidden: true,
@@ -930,7 +920,7 @@ index 61abe4a..a49d342 100644
        run: () => {
          dialog.clear()
          moveFirstChild()
-@@ -1048,7 +1119,7 @@ export function Session() {
+@@ -1048,7 +1118,7 @@ export function Session() {
        value: "session.parent",
        category: "Session",
        hidden: true,
@@ -939,7 +929,7 @@ index 61abe4a..a49d342 100644
        run: childSessionHandler(() => {
          const parentID = session()?.parentID
          if (parentID) {
-@@ -1065,7 +1136,7 @@ export function Session() {
+@@ -1065,7 +1135,7 @@ export function Session() {
        value: "session.child.next",
        category: "Session",
        hidden: true,
@@ -948,7 +938,7 @@ index 61abe4a..a49d342 100644
        run: childSessionHandler(() => {
          dialog.clear()
          moveChild(1)
-@@ -1076,7 +1147,7 @@ export function Session() {
+@@ -1076,7 +1146,7 @@ export function Session() {
        value: "session.child.previous",
        category: "Session",
        hidden: true,
@@ -957,7 +947,7 @@ index 61abe4a..a49d342 100644
        run: childSessionHandler(() => {
          dialog.clear()
          moveChild(-1)
-@@ -1120,12 +1191,12 @@ export function Session() {
+@@ -1120,12 +1190,12 @@ export function Session() {
      bindings: tuiConfig.keybinds.get("session.background"),
    }))
  
@@ -972,7 +962,7 @@ index 61abe4a..a49d342 100644
    })
  
    const revertDiffFiles = createMemo(() => getRevertDiffFiles(revertInfo()?.diff ?? ""))
-@@ -1135,7 +1206,7 @@ export function Session() {
+@@ -1135,7 +1205,7 @@ export function Session() {
      if (!messageID) return []
      const index = revertMessageIndex()
      if (index === -1) return []
@@ -981,7 +971,7 @@ index 61abe4a..a49d342 100644
        .slice(index)
        .filter((message) => message.role === "user")
    })
-@@ -1153,7 +1224,7 @@ export function Session() {
+@@ -1153,7 +1223,7 @@ export function Session() {
    })
  
    // snap to bottom when session changes
@@ -990,7 +980,7 @@ index 61abe4a..a49d342 100644
  
    return (
      <LocationProvider location={location()}>
-@@ -1162,7 +1233,7 @@ export function Session() {
+@@ -1162,7 +1232,7 @@ export function Session() {
            get width() {
              return contentWidth()
            },
@@ -999,7 +989,7 @@ index 61abe4a..a49d342 100644
            conceal,
            thinkingMode,
            showThinking,
-@@ -1200,7 +1271,7 @@ export function Session() {
+@@ -1200,7 +1270,7 @@ export function Session() {
                  <For each={messages()}>
                    {(message, index) => (
                      <Switch>
@@ -1008,7 +998,7 @@ index 61abe4a..a49d342 100644
                          {(function () {
                            const redoShortcut = useCommandShortcut("session.redo")
                            const [hover, setHover] = createSignal(false)
-@@ -1261,7 +1332,11 @@ export function Session() {
+@@ -1261,7 +1331,11 @@ export function Session() {
                          })()}
                        </Match>
                        <Match
@@ -1021,7 +1011,7 @@ index 61abe4a..a49d342 100644
                        >
                          <></>
                        </Match>
-@@ -1273,7 +1348,7 @@ export function Session() {
+@@ -1273,7 +1347,7 @@ export function Session() {
                              dialog.replace(() => (
                                <DialogMessage
                                  messageID={message.id}
@@ -1030,7 +1020,7 @@ index 61abe4a..a49d342 100644
                                  setPrompt={(promptInfo) => prompt?.set(promptInfo)}
                                />
                              ))
-@@ -1295,6 +1370,11 @@ export function Session() {
+@@ -1295,6 +1369,11 @@ export function Session() {
                  </For>
                </scrollbox>
                <box flexShrink={0}>
@@ -1042,7 +1032,7 @@ index 61abe4a..a49d342 100644
                  <Show when={permissions().length > 0}>
                    <PermissionPrompt
                      request={permissions()[0]}
-@@ -1307,28 +1387,29 @@ export function Session() {
+@@ -1307,28 +1386,29 @@ export function Session() {
                      directory={sync.session.get(questions()[0].sessionID)?.directory}
                    />
                  </Show>
@@ -1079,7 +1069,7 @@ index 61abe4a..a49d342 100644
                      />
                    </pluginRuntime.Slot>
                  </Show>
-@@ -1339,7 +1420,7 @@ export function Session() {
+@@ -1339,7 +1419,7 @@ export function Session() {
            <Show when={sidebarVisible()}>
              <Switch>
                <Match when={wide()}>
@@ -1088,7 +1078,7 @@ index 61abe4a..a49d342 100644
                </Match>
                <Match when={!wide()}>
                  <box
-@@ -1351,7 +1432,7 @@ export function Session() {
+@@ -1351,7 +1431,7 @@ export function Session() {
                    alignItems="flex-end"
                    backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
                  >
