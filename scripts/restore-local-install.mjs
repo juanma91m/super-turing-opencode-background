@@ -119,6 +119,7 @@ await runCli("restore-local-install", async (options) => {
       `install root: ${effectiveInstallRoot}`,
       `backup: ${inspection.backupPath}`,
       `result: ${result.state}`,
+      `preserved auxiliary bins: ${result.preservedBinEntries?.map((entry) => entry.name).join(", ") || "none"}`,
       `plugins: ${pluginResults.map(({ plugin, result }) => `${plugin.manifest.id}=${result.state}`).join(", ")}`,
       `assets: ${assetResults.map(({ asset, result }) => `${asset.manifest.id}=${result.state}`).join(", ") || "none"}`,
       pluginResults.some(({ result }) => result.state === "modified") || assetResults.some(({ result }) => result.state === "modified")

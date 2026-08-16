@@ -16,6 +16,7 @@
     "reapply": "node ./scripts/reapply.mjs",
     "adopt-local-install": "node ./scripts/adopt-local-install.mjs",
     "restore-local-install": "node ./scripts/restore-local-install.mjs",
-    "smoke": "node ./scripts/smoke.mjs"
+    "smoke": "node ./scripts/smoke.mjs",
+    "test": "node --test test/*.test.mjs"
   }
 }
