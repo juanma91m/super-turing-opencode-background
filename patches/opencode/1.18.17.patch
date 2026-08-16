@@ -26,14 +26,11 @@ index 5d93139..deabd88 100644
        Dialog: () => null,
        DialogAlert: () => null,
 diff --git a/packages/plugin/src/tui.ts b/packages/plugin/src/tui.ts
-index 6781216..d09ee97 100644
+index 6781216..d822a97 100644
 --- a/packages/plugin/src/tui.ts
 +++ b/packages/plugin/src/tui.ts
-@@ -210,8 +210,23 @@ export type TuiPromptRef = {
- 
- export type TuiPromptProps = {
+@@ -212,6 +212,20 @@ export type TuiPromptProps = {
    sessionID?: string
-+  workspaceID?: string
    visible?: boolean
    disabled?: boolean
 +  allowSubmitWhenBusy?: boolean
@@ -53,7 +50,7 @@ index 6781216..d09ee97 100644
    onSubmit?: () => void
    ref?: (ref: TuiPromptRef | undefined) => void
    hint?: JSX.Element
-@@ -470,6 +485,10 @@ export type TuiHostSlotMap = {
+@@ -470,6 +484,10 @@ export type TuiHostSlotMap = {
    session_prompt_right: {
      session_id: string
    }
@@ -64,7 +61,7 @@ index 6781216..d09ee97 100644
    home_bottom: {}
    home_footer: {}
    sidebar_title: {
-@@ -578,6 +597,56 @@ export type TuiWorkspace = {
+@@ -578,6 +596,56 @@ export type TuiWorkspace = {
    set: (workspaceID?: string) => void
  }
  
@@ -121,7 +118,7 @@ index 6781216..d09ee97 100644
  export type TuiPluginApi = {
    app: TuiApp
    attention: TuiAttention
-@@ -596,6 +665,10 @@ export type TuiPluginApi = {
+@@ -596,6 +664,10 @@ export type TuiPluginApi = {
      navigate: (name: string, params?: Record<string, unknown>) => void
      readonly current: TuiRouteCurrent
    }
@@ -207,14 +204,11 @@ index c508fc6..1422991 100644
          dialog.clear()
        }}
 diff --git a/packages/tui/src/component/prompt/index.tsx b/packages/tui/src/component/prompt/index.tsx
-index fe7f4a2..c0b0ac5 100644
+index fe7f4a2..9594961 100644
 --- a/packages/tui/src/component/prompt/index.tsx
 +++ b/packages/tui/src/component/prompt/index.tsx
-@@ -62,8 +62,23 @@ registerOpencodeSpinner()
- 
- export type PromptProps = {
+@@ -64,6 +64,20 @@ export type PromptProps = {
    sessionID?: string
-+  workspaceID?: string
    visible?: boolean
    disabled?: boolean
 +  allowSubmitWhenBusy?: boolean
@@ -234,7 +228,7 @@ index fe7f4a2..c0b0ac5 100644
    onSubmit?: () => void
    ref?: (ref: PromptRef | undefined) => void
    hint?: JSX.Element
-@@ -160,7 +175,15 @@ export function Prompt(props: PromptProps) {
+@@ -160,7 +174,15 @@ export function Prompt(props: PromptProps) {
    const tuiConfig = useTuiConfig()
    const dialog = useDialog()
    const toast = useToast()
@@ -251,7 +245,7 @@ index fe7f4a2..c0b0ac5 100644
    const history = usePromptHistory()
    const stash = usePromptStash()
    const keymap = useOpencodeKeymap()
-@@ -403,7 +426,8 @@ export function Prompt(props: PromptProps) {
+@@ -403,7 +425,8 @@ export function Prompt(props: PromptProps) {
              setStore("mode", "normal")
              return
            }
@@ -261,7 +255,7 @@ index fe7f4a2..c0b0ac5 100644
  
            setStore("interrupt", store.interrupt + 1)
  
-@@ -413,7 +437,7 @@ export function Prompt(props: PromptProps) {
+@@ -413,7 +436,7 @@ export function Prompt(props: PromptProps) {
  
            if (store.interrupt >= 2) {
              void sdk.client.session.abort({
@@ -270,7 +264,7 @@ index fe7f4a2..c0b0ac5 100644
              })
              setStore("interrupt", 0)
            }
-@@ -971,10 +995,11 @@ export function Prompt(props: PromptProps) {
+@@ -971,10 +994,11 @@ export function Prompt(props: PromptProps) {
        return false
      }
  
@@ -284,7 +278,7 @@ index fe7f4a2..c0b0ac5 100644
        dialog.replace(() => (
          <DialogWorkspaceUnavailable
            onRestore={() => {
-@@ -987,7 +1012,7 @@ export function Prompt(props: PromptProps) {
+@@ -987,7 +1011,7 @@ export function Prompt(props: PromptProps) {
      }
  
      const variant = local.model.variant.current()
@@ -293,7 +287,7 @@ index fe7f4a2..c0b0ac5 100644
      let finishMoveProgress = false
      if (sessionID == null) {
        const selectedWorkspace = workspace.selection()
-@@ -1091,32 +1116,49 @@ export function Prompt(props: PromptProps) {
+@@ -1091,32 +1115,49 @@ export function Prompt(props: PromptProps) {
        })
      } else {
        move.startSubmit()
@@ -368,7 +362,7 @@ index fe7f4a2..c0b0ac5 100644
        if (editorParts.length > 0) editor.markSelectionSent()
      }
      history.append({
-@@ -1132,7 +1174,7 @@ export function Prompt(props: PromptProps) {
+@@ -1132,7 +1173,7 @@ export function Prompt(props: PromptProps) {
      props.onSubmit?.()
  
      // temporary hack to make sure the message is sent
@@ -463,7 +457,7 @@ index a05d315..95a5af8 100644
              save()
            },
 diff --git a/packages/tui/src/plugin/adapters.tsx b/packages/tui/src/plugin/adapters.tsx
-index fef0ec8..59bef6d 100644
+index fef0ec8..a847c4f 100644
 --- a/packages/tui/src/plugin/adapters.tsx
 +++ b/packages/tui/src/plugin/adapters.tsx
 @@ -1,4 +1,14 @@
@@ -601,11 +595,8 @@ index fef0ec8..59bef6d 100644
      ui: {
        Dialog(props) {
          return (
-@@ -243,8 +358,11 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
-         return (
-           <Prompt
+@@ -245,6 +360,8 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
              sessionID={props.sessionID}
-+            workspaceID={props.workspaceID}
              visible={props.visible}
              disabled={props.disabled}
 +            allowSubmitWhenBusy={props.allowSubmitWhenBusy}
