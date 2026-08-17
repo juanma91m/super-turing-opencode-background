@@ -10,6 +10,7 @@ INSTALL_ROOT="${HOME}/.opencode"
 OPENCODE_ROOT=""
 BUN_PATH=""
 DRY_RUN=0
+PREFLIGHT_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Options:
   --opencode-root <path>    Use an existing clean compatible source checkout
   --install-root <path>     Local OpenCode install root (default: ~/.opencode)
   --bun-path <path>         Bun executable used to build the managed runtime
+  --preflight               Validate prerequisites without installing
   --dry-run                 Validate/report without changing the installation
   -h, --help                Show this help
 EOF
@@ -84,6 +86,7 @@ while [[ "$#" -gt 0 ]]; do
     --opencode-root) OPENCODE_ROOT="$2"; shift 2 ;;
     --install-root) INSTALL_ROOT="$2"; shift 2 ;;
     --bun-path) BUN_PATH="$2"; shift 2 ;;
+    --preflight) PREFLIGHT_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -113,10 +116,21 @@ fi
 if [[ -z "$BUN_PATH" ]]; then
   BUN_PATH="$(command -v bun || true)"
 fi
+if [[ -z "$BUN_PATH" && -x "$HOME/.bun/bin/bun" ]]; then
+  BUN_PATH="$HOME/.bun/bin/bun"
+fi
+if [[ -z "$BUN_PATH" && -x "$HOME/.local/bin/bun" ]]; then
+  BUN_PATH="$HOME/.local/bin/bun"
+fi
 [[ -n "$BUN_PATH" && -x "$BUN_PATH" ]] || {
   printf 'A Bun executable is required; install bun or pass --bun-path\n' >&2
   exit 1
 }
+
+if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
+  log "Preflight OK: Bun disponible en $BUN_PATH"
+  exit 0
+fi
 
 if [[ ! -e "$OPENCODE_ROOT" ]]; then
   if [[ "$DRY_RUN" -eq 1 ]]; then

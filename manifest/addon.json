@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "opencode-background-tasks",
   "name": "OpenCode Background Tasks",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "channel": "alpha",
   "repositoryReady": true,
   "distribution": {
