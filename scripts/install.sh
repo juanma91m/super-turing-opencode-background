@@ -79,6 +79,30 @@ PY
   return 1
 }
 
+validate_local_opencode_version() {
+  local opencode_bin="$INSTALL_ROOT/bin/opencode" actual_version
+  [[ -x "$opencode_bin" ]] || {
+    printf 'A local OpenCode installation is required at %s\n' "$opencode_bin" >&2
+    return 1
+  }
+  actual_version="$("$opencode_bin" --version)"
+  if ! python3 - "$REPO_DIR/manifest/compat.json" "$actual_version" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+actual = sys.argv[2].strip()
+supported = manifest["opencode"]["modes"]["managed-local-install"]["supportedVersions"]
+raise SystemExit(0 if actual in supported else 1)
+PY
+  then
+    printf 'OpenCode %s is not supported by this Background addon revision\n' "$actual_version" >&2
+    return 1
+  fi
+  log "OpenCode local compatible: $actual_version"
+}
+
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --target-dir) TARGET_DIR="$2"; shift 2 ;;
@@ -106,6 +130,8 @@ if installed_is_healthy; then
   log "Background managed install is already healthy in $INSTALL_ROOT"
   exit 0
 fi
+
+validate_local_opencode_version
 
 opencode_version="$(manifest_value distribution.preferredOpenCodeVersion)"
 source_repository="$(manifest_value distribution.sourceRepository)"

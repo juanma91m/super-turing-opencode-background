@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- se agrega soporte validado para OpenCode `1.18.18`; como el release no modifica ninguna superficie tocada por el host patch, reutiliza explícitamente el patch `1.18.17` después de `git apply --check`
+- el preflight valida ahora la versión local de OpenCode antes de aceptar Bun o modificar el sistema; versión del addon `0.1.0-alpha.4`
 - se agrega `scripts/preflight.sh` para que la distribución valide Bun antes de modificar la instalación global; también detecta las ubicaciones oficiales `~/.bun/bin/bun` y `~/.local/bin/bun` aunque el shell todavía no haya actualizado `PATH`
 - versión del addon `0.1.0-alpha.3`
 - se agrega `scripts/install.sh` como contrato estable de distribución: prepara el checkout OpenCode preferido, ejecuta `enable` y adopta la instalación local sin mover esa lógica al stack base

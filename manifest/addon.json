@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "opencode-background-tasks",
   "name": "OpenCode Background Tasks",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "channel": "alpha",
   "repositoryReady": true,
   "distribution": {
     "installerContract": "scripts/install.sh",
-    "preferredOpenCodeVersion": "1.18.17",
+    "preferredOpenCodeVersion": "1.18.18",
     "sourceRepository": "https://github.com/anomalyco/opencode.git"
   },
   "plugins": [
@@ -60,7 +60,8 @@
       "1.16.2": "patches/opencode/1.16.2.patch",
       "1.17.15": "patches/opencode/1.17.15.patch",
       "1.17.20": "patches/opencode/1.17.15.patch",
-      "1.18.17": "patches/opencode/1.18.17.patch"
+      "1.18.17": "patches/opencode/1.18.17.patch",
+      "1.18.18": "patches/opencode/1.18.17.patch"
     }
   },
   "state": {
