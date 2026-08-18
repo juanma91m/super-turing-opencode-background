@@ -84,6 +84,9 @@ bash scripts/install.sh
 
 Ese entrypoint prepara el checkout fuente de la versión preferida declarada en
 `manifest/addon.json`, ejecuta el lifecycle `enable` y adopta `~/.opencode`.
+Si Bun no está disponible, descarga la versión fijada por el manifest en un
+runtime user-space propio, verifica su SHA-256 y la usa sin modificar el perfil
+del shell ni reemplazar instalaciones globales.
 No reemplaza los comandos de lifecycle: los coordina y mantiene su lógica dentro
 de este addon.
 

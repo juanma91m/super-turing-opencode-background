@@ -9,6 +9,7 @@ TARGET_DIR="${HOME}/.config/opencode"
 INSTALL_ROOT="${HOME}/.opencode"
 OPENCODE_ROOT=""
 BUN_PATH=""
+BUN_RUNTIME_DIR="${HOME}/.local/share/super-turing-opencode-background/runtime"
 DRY_RUN=0
 PREFLIGHT_ONLY=0
 
@@ -26,6 +27,7 @@ Options:
   --opencode-root <path>    Use an existing clean compatible source checkout
   --install-root <path>     Local OpenCode install root (default: ~/.opencode)
   --bun-path <path>         Bun executable used to build the managed runtime
+  --bun-runtime-dir <path>  Managed Bun runtime root used when Bun is missing
   --preflight               Validate prerequisites without installing
   --dry-run                 Validate/report without changing the installation
   -h, --help                Show this help
@@ -45,6 +47,67 @@ for part in sys.argv[2].split('.'):
     value = value[part]
 print(value)
 PY
+}
+
+install_managed_bun() {
+  local version asset url expected_sha version_dir archive temp_dir actual_sha
+  version="$(manifest_value distribution.bun.version)"
+  asset="$(manifest_value distribution.bun.asset)"
+  url="$(manifest_value distribution.bun.url)"
+  expected_sha="$(manifest_value distribution.bun.sha256)"
+  version_dir="$BUN_RUNTIME_DIR/bun-$version"
+
+  if [[ -x "$version_dir/bun" ]]; then
+    [[ "$($version_dir/bun --version)" == "$version" ]] || {
+      printf 'Managed Bun version mismatch in %s\n' "$version_dir" >&2
+      exit 1
+    }
+    BUN_PATH="$version_dir/bun"
+    return 0
+  fi
+
+  for dependency in curl unzip sha256sum uname; do
+    command -v "$dependency" >/dev/null 2>&1 || {
+      printf '%s is required to bootstrap managed Bun %s\n' "$dependency" "$version" >&2
+      exit 1
+    }
+  done
+  [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] || {
+    printf 'Automatic Bun bootstrap currently supports Linux x86_64 only\n' >&2
+    exit 1
+  }
+
+  if [[ "$PREFLIGHT_ONLY" -eq 1 || "$DRY_RUN" -eq 1 ]]; then
+    log "Managed Bun $version can be bootstrapped in $version_dir"
+    BUN_PATH="$version_dir/bun"
+    return 0
+  fi
+
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$temp_dir"' RETURN
+  archive="$temp_dir/$asset"
+  log "Downloading managed Bun $version"
+  curl --fail --location --silent --show-error "$url" --output "$archive"
+  actual_sha="$(sha256sum "$archive" | cut -d' ' -f1)"
+  [[ "$actual_sha" == "$expected_sha" ]] || {
+    printf 'Bun archive checksum mismatch: expected %s, got %s\n' "$expected_sha" "$actual_sha" >&2
+    exit 1
+  }
+  unzip -q "$archive" -d "$temp_dir/extracted"
+  [[ -x "$temp_dir/extracted/bun-linux-x64/bun" ]] || {
+    printf 'Downloaded Bun archive has no expected executable\n' >&2
+    exit 1
+  }
+  [[ "$($temp_dir/extracted/bun-linux-x64/bun --version)" == "$version" ]] || {
+    printf 'Downloaded Bun version mismatch\n' >&2
+    exit 1
+  }
+  mkdir -p "$BUN_RUNTIME_DIR"
+  mv "$temp_dir/extracted/bun-linux-x64" "$version_dir"
+  BUN_PATH="$version_dir/bun"
+  trap - RETURN
+  rm -rf "$temp_dir"
+  log "Managed Bun $version installed in $version_dir"
 }
 
 installed_is_healthy() {
@@ -110,6 +173,7 @@ while [[ "$#" -gt 0 ]]; do
     --opencode-root) OPENCODE_ROOT="$2"; shift 2 ;;
     --install-root) INSTALL_ROOT="$2"; shift 2 ;;
     --bun-path) BUN_PATH="$2"; shift 2 ;;
+    --bun-runtime-dir) BUN_RUNTIME_DIR="$2"; shift 2 ;;
     --preflight) PREFLIGHT_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -148,13 +212,16 @@ fi
 if [[ -z "$BUN_PATH" && -x "$HOME/.local/bin/bun" ]]; then
   BUN_PATH="$HOME/.local/bin/bun"
 fi
-[[ -n "$BUN_PATH" && -x "$BUN_PATH" ]] || {
-  printf 'A Bun executable is required; install bun or pass --bun-path\n' >&2
+if [[ -z "$BUN_PATH" ]]; then
+  install_managed_bun
+fi
+[[ -n "$BUN_PATH" && ( -x "$BUN_PATH" || "$PREFLIGHT_ONLY" -eq 1 || "$DRY_RUN" -eq 1 ) ]] || {
+  printf 'A Bun executable is required and automatic bootstrap failed\n' >&2
   exit 1
 }
 
 if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
-  log "Preflight OK: Bun disponible en $BUN_PATH"
+  log "Preflight OK: Bun available or bootstrap-ready at $BUN_PATH"
   exit 0
 fi
 

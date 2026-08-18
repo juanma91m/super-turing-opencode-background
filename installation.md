@@ -18,7 +18,8 @@ Esto **no** es todavía una instalación `plugin-only` sobre builds oficiales de
 - `node`
 - `git`
 - un checkout fuente compatible de OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49`, `1.15.0`, `1.15.3`, `1.15.6`, `1.15.13`, `1.16.2`, `1.17.15`, `1.17.20`, `1.18.17` o `1.18.18`
-- para `managed-local-install`: `bun`
+- para `managed-local-install`: `bun`; si falta, el installer estable puede
+  bootstrappear la versión fijada en un runtime user-space propio
 - permisos para escribir en:
   - `~/.config/opencode/plugins/`
   - `~/.local/state/opencode-addons/`
@@ -95,6 +96,7 @@ Opciones útiles:
 bash scripts/install.sh --dry-run
 bash scripts/install.sh --workspace-dir "$HOME/.local/src"
 bash scripts/install.sh --bun-path /ruta/al/binario/bun
+bash scripts/install.sh --bun-runtime-dir "$HOME/.local/share/super-turing-opencode-background/runtime"
 ```
 
 El script no descarga credenciales ni modifica configuración de cuentas. Si ya
