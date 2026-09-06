@@ -119,6 +119,11 @@ interface TaskRecord {
 interface Snapshot {
   projectId?: string;
   items: TaskRecord[];
+  childAttention: {
+    sessions: number;
+    permissions: number;
+    questions: number;
+  };
   counts: {
     pending: number;
     running: number;
@@ -827,6 +832,11 @@ function resolveThreadRootSessionID(
 const BackgroundAgentsTui: TuiPlugin = async (api) => {
   const [snapshot, setSnapshot] = createSignal<Snapshot>({
     items: [],
+    childAttention: {
+      sessions: 0,
+      permissions: 0,
+      questions: 0,
+    },
     counts: {
       pending: 0,
       running: 0,
@@ -1757,6 +1767,11 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     let sessionItems: TaskRecord[] = [];
     let backgroundModeEnabled = false;
     let delegationParentSessionIDs: Set<string> | undefined;
+    let childAttention: Snapshot["childAttention"] = {
+      sessions: 0,
+      permissions: 0,
+      questions: 0,
+    };
 
     if (sessionID) {
       const sessionsResult = await api.client.session.list({
@@ -1790,6 +1805,39 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
         delegationParentSessionIDs = new Set(threadSessionIDs);
         if (threadState.foregroundSessionID)
           delegationParentSessionIDs.add(threadState.foregroundSessionID);
+        const sessionByID = new Map(sessions.map((item) => [item.id, item]));
+        const descendantSessionIDs = sessions
+          .filter((item) => {
+            let candidate = item;
+            const visited = new Set<string>();
+            while (candidate.parentID && !visited.has(candidate.id)) {
+              if (candidate.parentID === rootSessionID) return true;
+              visited.add(candidate.id);
+              const parent = sessionByID.get(candidate.parentID);
+              if (!parent) return false;
+              candidate = parent;
+            }
+            return false;
+          })
+          .map((item) => item.id)
+          .filter((candidate) => candidate !== threadState.foregroundSessionID);
+        const childAttentionItems = descendantSessionIDs.map((candidate) => ({
+          permissions: api.state.session.permission(candidate).length,
+          questions: api.state.session.question(candidate).length,
+        }));
+        childAttention = {
+          sessions: childAttentionItems.filter(
+            (item) => item.permissions > 0 || item.questions > 0,
+          ).length,
+          permissions: childAttentionItems.reduce(
+            (total, item) => total + item.permissions,
+            0,
+          ),
+          questions: childAttentionItems.reduce(
+            (total, item) => total + item.questions,
+            0,
+          ),
+        };
         await ensureThreadSequences(rootSessionID, threadSessionIDs);
         const backgroundSessionIDs = threadSessionIDs.filter(
           (candidate) => candidate !== threadState.foregroundSessionID,
@@ -1824,6 +1872,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     const next: Snapshot = {
       projectId: delegationSnapshot.projectId,
       items,
+      childAttention,
       counts: countItems(items),
       backgroundModeEnabled,
       currentSessionID: sessionID,
@@ -2241,12 +2290,25 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     activeSessionID: string;
   }) => {
     const inspection = loadInspectionState();
-    if (!inspection || inspection.sessionID !== input.sessionID) return null;
+    const inspecting = inspection?.sessionID === input.sessionID;
+    const attention = snapshot().childAttention;
+    if (!inspecting && attention.sessions === 0) return null;
 
     const theme = api.theme.current;
     const needsForegroundResponse =
       api.state.session.permission(input.activeSessionID).length > 0 ||
       api.state.session.question(input.activeSessionID).length > 0;
+
+    const attentionSummary = [
+      attention.permissions > 0
+        ? `${attention.permissions} ${attention.permissions === 1 ? "permiso pendiente" : "permisos pendientes"}`
+        : undefined,
+      attention.questions > 0
+        ? `${attention.questions} ${attention.questions === 1 ? "pregunta pendiente" : "preguntas pendientes"}`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
     return createElement(
       "box",
@@ -2265,17 +2327,35 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
           backgroundColor: theme.backgroundPanel,
           flexDirection: "column",
         },
-        createElement(
-          "text",
-          { fg: theme.text },
-          "Inspeccionando tarea en background",
-        ),
-        createElement(
-          "text",
-          { fg: theme.textMuted },
-          "Usá ctrl+f ctrl+f para volver al foreground.",
-        ),
-        needsForegroundResponse
+        attention.sessions > 0
+          ? createElement(
+              "text",
+              { fg: theme.warning },
+              `⚠ ${attention.sessions} ${attention.sessions === 1 ? "subagente necesita" : "subagentes necesitan"} atención`,
+            )
+          : null,
+        attentionSummary
+          ? createElement(
+              "text",
+              { fg: theme.textMuted },
+              `${attentionSummary}. Abrí la vista de subagentes para responder.`,
+            )
+          : null,
+        inspecting
+          ? createElement(
+              "text",
+              { fg: theme.text },
+              "Inspeccionando tarea en background",
+            )
+          : null,
+        inspecting
+          ? createElement(
+              "text",
+              { fg: theme.textMuted },
+              "Usá ctrl+f ctrl+f para volver al foreground.",
+            )
+          : null,
+        inspecting && needsForegroundResponse
           ? createElement(
               "text",
               { fg: theme.warning },
@@ -2554,6 +2634,14 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     },
   });
 
+  const unregisterAttentionEvents = [
+    api.event.on("permission.asked", () => void requestSnapshotRefresh()),
+    api.event.on("permission.replied", () => void requestSnapshotRefresh()),
+    api.event.on("question.asked", () => void requestSnapshotRefresh()),
+    api.event.on("question.replied", () => void requestSnapshotRefresh()),
+    api.event.on("question.rejected", () => void requestSnapshotRefresh()),
+  ];
+
   clearInspectionState();
   await requestSnapshotRefresh();
   const interval = setInterval(() => {
@@ -2568,6 +2656,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     unregisterCommands();
     unregisterSequenceRepeat();
     unregisterRawEscapeRepeat();
+    for (const unregister of unregisterAttentionEvents) unregister();
   });
 };
 

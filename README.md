@@ -12,6 +12,7 @@ Este add-on empaqueta la experiencia de background tasks que hoy permite:
 - volver al foreground con `ctrl+f ctrl+f`
 - listar tareas con `/bg-tasks`
 - inspeccionar tareas completadas o en curso
+- ver un aviso persistente cuando uno o más subagentes esperan permisos o respuestas
 - mantener la vista nativa de sesión y session switcher con proyección controlada por plugin
 
 Con la instalación completa del add-on, los agentes pasan a conocer y usar estas capacidades de forma autónoma porque el plugin server/runtime expone las tools y reglas necesarias, mientras el plugin TUI aporta la UX visible.

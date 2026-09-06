@@ -3,7 +3,7 @@
   "description": "Background and async delegation add-on for OpenCode",
   "private": true,
   "type": "module",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",

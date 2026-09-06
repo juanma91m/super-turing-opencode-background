@@ -33,15 +33,15 @@ Siempre mandar un **task packet explícito**:
 ### Ejemplo mínimo
 
 ```text
-Use delegate with explorer.
+Use delegate with code-inspector.
 
 Task packet:
-- Objective: confirm X in official docs.
-- Why: we need to decide Y now.
-- Scope: only docs for X, no comparisons.
-- Relevant facts: current implementation uses Z.
+- Objective: trace how X flows through the current repository.
+- Why: we need the real entry points before deciding Y.
+- Scope: read-only inspection, no implementation proposal.
+- Relevant facts: the observed behavior starts at Z.
 - Paths: /repo/path/file.ts
-- Expected output: max 4 bullets, include source URLs.
+- Expected output: max 4 bullets with exact file references and open questions.
 ```
 
 ## 3. Nested read-only
@@ -50,10 +50,11 @@ Permitido cuando aporta foco real.
 
 Casos típicos:
 
-- `frontend-web-developer -> explorer`
-- `backend-java-developer -> explorer`
 - `backend-java-developer -> code-inspector`
 - `reviewer -> code-inspector`
+
+Para documentación externa, el agente que coordina debe usar Context7 o fetch
+directo; no abrir una delegación genérica solo para tercerizar navegación.
 
 No asumir que una cadena más profunda va a funcionar.
 El segundo nivel ya no debe seguir delegando.

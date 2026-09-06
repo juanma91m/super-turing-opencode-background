@@ -179,12 +179,11 @@ const READ_ONLY_CONCURRENCY_LIMIT = 4
 const ISOLATED_WRITE_CONCURRENCY_LIMIT = 1
 
 const READ_ONLY_DELEGATION_MATRIX: Record<string, string[]> = {
-  "master-dev": ["backend-java-developer", "frontend-web-developer", "reviewer", "code-inspector", "explorer", "ui-web-designer"],
-  plan: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
-  planner: ["explorer", "code-inspector", "reviewer", "ui-web-designer"],
-  "frontend-web-developer": ["explorer", "code-inspector"],
-  "backend-java-developer": ["explorer", "code-inspector"],
-  "ui-web-designer": ["explorer"],
+  "master-dev": ["backend-java-developer", "frontend-web-developer", "reviewer", "code-inspector", "ui-web-designer"],
+  plan: ["code-inspector", "reviewer", "ui-web-designer"],
+  planner: ["code-inspector", "reviewer", "ui-web-designer"],
+  "frontend-web-developer": ["code-inspector"],
+  "backend-java-developer": ["code-inspector"],
   reviewer: ["code-inspector"],
 }
 
@@ -2449,7 +2448,7 @@ function createDelegate(manager: DelegationManager) {
     description: `Delegate a task to a read-only agent. Returns immediately with a readable ID.
 
 Use this for:
-- research and exploration
+- code inspection and bounded technical analysis
 - review and analysis
 - design work that does not edit files
 - any task where you want persistent, retrievable output while continuing productive work
@@ -2460,7 +2459,7 @@ Prefer this over the generic task/subagent flow when sidebar visibility matters:
 Results are persisted to disk and survive compaction. Nested read-only delegation is policy-limited to approved caller/target pairs and one secondary level.`,
     args: {
       prompt: tool.schema.string().describe("Detailed prompt for the delegated read-only agent. Include enough context for an isolated worker: objective, why, scope, constraints, relevant facts, exact paths or memory references, and expected output. Prefer English for consistency."),
-      agent: tool.schema.string().describe("Target read-only agent name, for example code-inspector, reviewer, explorer, or ui-web-designer."),
+      agent: tool.schema.string().describe("Target read-only agent name, for example code-inspector, reviewer, or ui-web-designer."),
     },
     async execute(args: { prompt: string; agent: string }, toolCtx: ToolContext): Promise<string> {
       if (!toolCtx?.sessionID) return "❌ delegate requires sessionID. This is a system error."

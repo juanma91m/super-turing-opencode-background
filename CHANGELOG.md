@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- el plugin TUI usa `session_notice` para mostrar en tiempo real cuántos subagentes están detenidos esperando permisos o respuestas, sin agregar otro cambio al patch del host
 - el installer bootstrappea Bun `1.3.14` en un runtime user-space propio cuando no existe, verificando el SHA-256 fijado por el manifest; versión del addon `0.1.0-alpha.5`
 - se agrega soporte validado para OpenCode `1.18.18`; como el release no modifica ninguna superficie tocada por el host patch, reutiliza explícitamente el patch `1.18.17` después de `git apply --check`
 - el preflight valida ahora la versión local de OpenCode antes de aceptar Bun o modificar el sistema; versión del addon `0.1.0-alpha.4`
