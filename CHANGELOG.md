@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- se agrega soporte validado para OpenCode `1.18.30`; el patch `1.18.17` aplica limpio, las únicas modificaciones upstream sobre archivos tocados por el patch quedan fuera de sus hunks, y pasaron typechecks, tests focalizados, build Linux x64 y `opencode debug config`; versión del addon `0.1.0-alpha.6`
 - el plugin TUI usa `session_notice` para mostrar en tiempo real cuántos subagentes están detenidos esperando permisos o respuestas, sin agregar otro cambio al patch del host
 - el installer bootstrappea Bun `1.3.14` en un runtime user-space propio cuando no existe, verificando el SHA-256 fijado por el manifest; versión del addon `0.1.0-alpha.5`
 - se agrega soporte validado para OpenCode `1.18.18`; como el release no modifica ninguna superficie tocada por el host patch, reutiliza explícitamente el patch `1.18.17` después de `git apply --check`
