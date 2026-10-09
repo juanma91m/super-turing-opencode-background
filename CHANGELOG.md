@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- se corrige la derivación visual de estado para delegaciones lanzadas por agentes: el TUI y `delegation_list` reconcilian el `meta.json` persistido contra la sesión hija viva para mostrar `needs_input` ante permisos/preguntas y `complete` cuando una sesión marcada previamente como `running`/`timeout` ya terminó
+- `scripts/reapply.mjs` ahora usa `backupPath` al reemplazar plugins compatibles, igual que `enable`, para que el despliegue incremental de plugins modificados no falle después del dry-run
+- `adopt-local-install` agrega `--skip-storage-backup` para recuperaciones explícitas cuando no hay espacio para duplicar el storage de OpenCode; además limpia backups parciales si `backupStorageRoots` falla, evitando consumir disco con intentos incompletos
+- se agrega soporte validado para OpenCode `1.18.35`; reutiliza explícitamente `patches/opencode/1.18.17.patch`, no hubo cambios upstream en archivos parcheados desde `1.18.30`, pasaron typechecks focalizados, 15 tests TUI, build Linux x64, smoke del lifecycle y `opencode debug config`; versión del addon `0.1.0-alpha.7`
 - se agrega soporte validado para OpenCode `1.18.30`; el patch `1.18.17` aplica limpio, las únicas modificaciones upstream sobre archivos tocados por el patch quedan fuera de sus hunks, y pasaron typechecks, tests focalizados, build Linux x64 y `opencode debug config`; versión del addon `0.1.0-alpha.6`
 - el plugin TUI usa `session_notice` para mostrar en tiempo real cuántos subagentes están detenidos esperando permisos o respuestas, sin agregar otro cambio al patch del host
 - el installer bootstrappea Bun `1.3.14` en un runtime user-space propio cuando no existe, verificando el SHA-256 fijado por el manifest; versión del addon `0.1.0-alpha.5`

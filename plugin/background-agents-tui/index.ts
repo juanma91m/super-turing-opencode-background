@@ -179,6 +179,12 @@ const TOASTABLE_STATUSES = new Set([
   "cancelled",
   "needs_input",
 ]);
+const LIVE_RECONCILABLE_DELEGATION_STATUSES = new Set([
+  "pending",
+  "running",
+  "timeout",
+  "error",
+]);
 const SESSION_STATE_PREFIX = "background-agents-tui";
 const MAX_TRACKED_SESSION_RUNS = 25;
 const SEQUENCE_REPEAT_WINDOW_MS = 900;
@@ -701,6 +707,7 @@ function countItems(items: TaskRecord[]): Snapshot["counts"] {
 }
 
 async function readProjectDelegations(
+  api: Parameters<TuiPlugin>[0],
   projectDirectory: string,
   allowedParentSessionIDs?: ReadonlySet<string>,
 ): Promise<{ projectId: string; items: TaskRecord[] }> {
@@ -738,7 +745,7 @@ async function readProjectDelegations(
         try {
           const raw = await fs.readFile(metaPath, "utf8");
           const meta = JSON.parse(raw) as PersistedDelegationMeta;
-          items.push({
+          const item: TaskRecord = {
             id: meta.id,
             source: "delegation",
             status: meta.status,
@@ -759,7 +766,9 @@ async function readProjectDelegations(
             updatedAt:
               meta.completedAt ?? meta.startedAt ?? meta.queuedAt ?? undefined,
             artifactsDir: meta.artifactsDir ?? undefined,
-          });
+          };
+          item.status = await deriveLiveDelegationStatus(api, item);
+          items.push(item);
         } catch {
           // ignore malformed or transient files
         }
@@ -820,6 +829,46 @@ function buildSessionRunStatus(item: {
   if ((item.assistant.info as any)?.time?.completed) return "done";
   if (item.hasPendingInput) return "needs_input";
   return "running";
+}
+
+function latestAssistantMessage(
+  items: SessionMessageRecord[],
+): SessionMessageRecord | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.info.role === "assistant") return item;
+  }
+  return undefined;
+}
+
+async function deriveLiveDelegationStatus(
+  api: Parameters<TuiPlugin>[0],
+  item: TaskRecord,
+): Promise<string> {
+  if (!item.sessionID) return item.status;
+  if (!LIVE_RECONCILABLE_DELEGATION_STATUSES.has(item.status))
+    return item.status;
+
+  const hasPendingInput =
+    api.state.session.permission(item.sessionID).length > 0 ||
+    api.state.session.question(item.sessionID).length > 0;
+  if (hasPendingInput) return "needs_input";
+
+  try {
+    const messages = await fetchSessionMessages(api, item.sessionID);
+    const assistant = latestAssistantMessage(messages);
+    const error = (assistant?.info as { error?: { name?: string } } | undefined)
+      ?.error;
+    if (error?.name === "MessageAbortedError") return "interrupted";
+    if (error) return "error";
+    if ((assistant?.info as any)?.time?.completed)
+      return item.mode === "isolated-write" ? "review_pending" : "complete";
+  } catch {
+    return item.status;
+  }
+
+  if (api.state.session.status(item.sessionID)?.type === "busy") return "running";
+  return item.status;
 }
 
 function resolveThreadRootSessionID(
@@ -1856,6 +1905,7 @@ const BackgroundAgentsTui: TuiPlugin = async (api) => {
     }
 
     const delegationSnapshot = await readProjectDelegations(
+      api,
       currentDirectory(),
       delegationParentSessionIDs,
     );

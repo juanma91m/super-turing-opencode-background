@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "opencode-background-tasks",
   "name": "OpenCode Background Tasks",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "channel": "alpha",
   "repositoryReady": true,
   "distribution": {
     "installerContract": "scripts/install.sh",
-    "preferredOpenCodeVersion": "1.18.30",
+    "preferredOpenCodeVersion": "1.18.35",
     "sourceRepository": "https://github.com/anomalyco/opencode.git",
     "bun": {
       "version": "1.3.14",
@@ -23,6 +23,7 @@
       "installDirName": "",
       "installFile": "background-agents.ts",
       "compatibleInstalledHashes": [
+        "c856dd218753c6f1e544d6e65a5e801ba25559680214908be24bfeee4a9dcfaf",
         "7001f1f40e5199cdc6e4a7e97356b5975d4711a20f8b8ef49fcef41247bb1710"
       ]
     },
@@ -32,6 +33,7 @@
       "installDirName": "background-agents-tui",
       "installFile": "index.ts",
       "compatibleInstalledHashes": [
+        "e78d6b17d947d6cff4457f6b95768f7fbb80abbc430793c4bbc78ea2da6cc076",
         "80a0e78bb8481d4b04dfd062682039286cd483837651a3519c10fc3335dd3fda",
         "2104f101da20e1ff7fd0711ebd87bbd31260bc0198243c748214fc9946d2b500",
         "9bf3d6827d0f559730945ba3cb7a3b8fafec272941c532fce4a66e18d28dc16b",
@@ -69,7 +71,8 @@
       "1.17.20": "patches/opencode/1.17.15.patch",
       "1.18.17": "patches/opencode/1.18.17.patch",
       "1.18.18": "patches/opencode/1.18.17.patch",
-      "1.18.30": "patches/opencode/1.18.17.patch"
+      "1.18.30": "patches/opencode/1.18.17.patch",
+      "1.18.35": "patches/opencode/1.18.17.patch"
     }
   },
   "state": {

@@ -6,11 +6,11 @@ import { ensureCompatibleMode } from "../lib/compat.mjs";
 import { inspectManagedFile } from "../lib/plugin.mjs";
 import {
   adoptManagedLocalInstall,
-  backupStorageRoots,
   detectBunPath,
   ensureBuiltOpencodeBinary,
   inspectManagedLocalInstall,
   inspectManagedLocalInstallRoot,
+  prepareStorageBackup,
   resolveBackupPath,
   resolveStorageBackupPath,
   resolveUserStoragePaths,
@@ -173,15 +173,16 @@ await runCli("adopt-local-install", async (options) => {
 
   const backupPath = resolveBackupPath(manifest.stateFile, installRoot);
   const storage = resolveUserStoragePaths();
-  const storageBackupRoot = resolveStorageBackupPath(
-    manifest.stateFile,
-    installRoot,
-  );
-  const storageBackup = await backupStorageRoots({
-    storage,
-    backupRoot: storageBackupRoot,
-    dryRun: options.dryRun,
-  });
+  const requestedStorageBackupRoot = options.skipStorageBackup
+    ? undefined
+    : resolveStorageBackupPath(manifest.stateFile, installRoot);
+  const { backupRoot: storageBackupRoot, backup: storageBackup } =
+    await prepareStorageBackup({
+      storage,
+      backupRoot: requestedStorageBackupRoot,
+      skip: options.skipStorageBackup,
+      dryRun: options.dryRun,
+    });
   const result = await adoptManagedLocalInstall({
     installRoot,
     backupPath,
@@ -257,7 +258,7 @@ await runCli("adopt-local-install", async (options) => {
       `preserved bin entries: ${result.preservedBinEntries?.map((entry) => `${entry.name}=${entry.mode}`).join(", ") || "none"}`,
       `binary prep: ${runtimeBinary.state}`,
       `session db: ${storage.dbPath}`,
-      `storage backup: ${storageBackupRoot}`,
+      `storage backup: ${storageBackupRoot ?? `${storageBackup.state} (${storageBackup.reason})`}`,
       `result: ${result.state}`,
     ],
   };

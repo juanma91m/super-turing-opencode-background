@@ -32,6 +32,7 @@ await runCli("reapply", async (options) => {
     mode.patchRequired && target.root
       ? inspectWorktree(target.root)
       : { ok: true, clean: true, entries: [] };
+  const managedBackupRoot = path.join(path.dirname(manifest.stateFile), "managed-file-backup");
 
   if (mode.patchRequired) {
     if (!target.root) {
@@ -50,10 +51,16 @@ await runCli("reapply", async (options) => {
 
   const pluginResults = [];
   for (const plugin of manifest.plugins) {
+    const backupPath = path.join(
+      managedBackupRoot,
+      plugin.manifest.installDirName || "root",
+      plugin.manifest.installFile,
+    );
     const result = await installManagedFile(plugin.sourcePath, plugin.installedPath, {
       dryRun: options.dryRun,
       replaceCompatibleInstalledHashes:
         plugin.manifest.compatibleInstalledHashes || [],
+      backupPath,
     });
 
     if (result.state === "modified") {
@@ -66,13 +73,15 @@ await runCli("reapply", async (options) => {
         3,
       );
     }
-    pluginResults.push({ plugin, result });
+    pluginResults.push({ plugin, result, backupPath });
   }
 
   const assetResults = [];
   for (const asset of manifest.assets) {
+    const backupPath = path.join(managedBackupRoot, asset.manifest.id, path.basename(asset.manifest.installPath));
     const result = await installManagedFile(asset.sourcePath, asset.installedPath, {
       dryRun: options.dryRun,
+      backupPath,
     });
 
     if (result.state === "modified") {
@@ -85,7 +94,7 @@ await runCli("reapply", async (options) => {
         3,
       );
     }
-    assetResults.push({ asset, result });
+    assetResults.push({ asset, result, backupPath });
   }
 
   const patchResult = mode.patchRequired
@@ -124,20 +133,30 @@ await runCli("reapply", async (options) => {
       state: patchResult.state,
     },
       plugins: await Promise.all(
-        pluginResults.map(async ({ plugin, result }) => ({
+        pluginResults.map(async ({ plugin, result, backupPath }) => ({
           id: plugin.manifest.id,
           sourcePath: plugin.sourcePath,
           installedPath: plugin.installedPath,
+          backupPath:
+            result.state === "replaced_compatible" ||
+            result.state === "would_replace_compatible"
+              ? backupPath
+              : undefined,
           sourceHash: await sha256File(plugin.sourcePath),
           installedHash: result.installedHash || result.sourceHash,
           state: result.state,
         })),
       ),
       assets: await Promise.all(
-        assetResults.map(async ({ asset, result }) => ({
+        assetResults.map(async ({ asset, result, backupPath }) => ({
           id: asset.manifest.id,
           sourcePath: asset.sourcePath,
           installedPath: asset.installedPath,
+          backupPath:
+            result.state === "replaced_compatible" ||
+            result.state === "would_replace_compatible"
+              ? backupPath
+              : undefined,
           sourceHash: await sha256File(asset.sourcePath),
           installedHash: result.installedHash || result.sourceHash,
           state: result.state,

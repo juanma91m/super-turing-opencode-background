@@ -132,7 +132,9 @@ await runCli("status", async (options) => {
         : "session db: unresolved",
       managedStorageBackupRoot
         ? `storage backup: ${managedStorageBackupRoot}`
-        : "storage backup: n/a",
+        : state?.managedLocalInstall?.storageBackup?.state
+          ? `storage backup: ${state.managedLocalInstall.storageBackup.state}${state.managedLocalInstall.storageBackup.reason ? ` (${state.managedLocalInstall.storageBackup.reason})` : ""}`
+          : "storage backup: n/a",
     ],
   };
 });

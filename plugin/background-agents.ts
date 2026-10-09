@@ -177,6 +177,7 @@ const RECENT_COMPLETED_LIMIT = 10
 const MAX_DELEGATION_CALLER_DEPTH = 1
 const READ_ONLY_CONCURRENCY_LIMIT = 4
 const ISOLATED_WRITE_CONCURRENCY_LIMIT = 1
+const LIVE_RECONCILABLE_DELEGATION_STATUSES = new Set(["pending", "running", "timeout", "error"])
 
 const READ_ONLY_DELEGATION_MATRIX: Record<string, string[]> = {
   "master-dev": ["backend-java-developer", "frontend-web-developer", "reviewer", "code-inspector", "ui-web-designer"],
@@ -1108,6 +1109,31 @@ class DelegationManager {
   private async getSessionMessages(sessionID: string): Promise<Array<{ info?: any; parts?: Part[] }>> {
     const messages = await this.client.session.messages({ path: { id: sessionID } })
     return (messages?.data ?? []) as Array<{ info?: any; parts?: Part[] }>
+  }
+
+  private latestAssistantMessage(messages: Array<{ info?: any; parts?: Part[] }>): { info?: any; parts?: Part[] } | undefined {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index]
+      if (message.info?.role === "assistant") return message
+    }
+    return undefined
+  }
+
+  private async deriveLiveDelegationStatus(delegation: Delegation): Promise<string> {
+    if (!delegation.sessionID) return String(delegation.status)
+    if (!LIVE_RECONCILABLE_DELEGATION_STATUSES.has(String(delegation.status))) return String(delegation.status)
+
+    const pendingInput = await this.getSessionPendingInput(delegation.sessionID)
+    if (pendingInput.permissions.length > 0 || pendingInput.questions.length > 0) return "needs_input"
+
+    const messages = await this.getSessionMessages(delegation.sessionID)
+    const assistant = this.latestAssistantMessage(messages)
+    const error = assistant?.info?.error
+    if (error?.name === "MessageAbortedError") return "interrupted"
+    if (error) return "error"
+    if (assistant?.info?.time?.completed) return delegation.mode === "isolated-write" ? "review_pending" : "complete"
+
+    return String(delegation.status)
   }
 
   private async getSessionPendingInput(sessionID: string): Promise<{ permissions: any[]; questions: any[]; complete: boolean }> {
@@ -2307,9 +2333,10 @@ ${content}`
       if (delegation.status === "running") {
         await this.refreshProgress(delegation)
       }
+      const status = await this.deriveLiveDelegationStatus(delegation)
       results.push({
         id: delegation.id,
-        status: delegation.status,
+        status,
         title: delegation.title || "(generating...)",
         description: delegation.description || summarize(delegation.prompt, 120),
         agent: delegation.agent,
@@ -2335,9 +2362,10 @@ ${content}`
         if (metaRaw) {
           const meta = JSON.parse(metaRaw) as PersistedDelegationMeta
           const delegation = this.hydrateDelegationMeta(meta)
+          const status = await this.deriveLiveDelegationStatus(delegation)
           results.push({
             id,
-            status: delegation.status,
+            status,
             title: delegation.title ?? id,
             description: delegation.description ?? "(loaded from storage)",
             agent: delegation.agent,

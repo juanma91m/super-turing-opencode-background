@@ -53,3 +53,8 @@ Suggested sequence of generic upstream changes:
 If OpenCode official does **not** ship the hooks above, this addon still needs a host patch.
 
 That means the remaining blocker is no longer feature logic; it is **host hook availability in official OpenCode builds**.
+
+## Current upstream audit
+
+- OpenCode `1.18.35` keeps the same missing host-hook situation as `1.18.30`; it is compatible with the existing patch, but it does not remove the need for it.
+- The `v2.x` source line has a more capable TUI plugin architecture, but until it is a published stable release and the submit/busy-session semantics are audited end-to-end, it should be treated as a separate migration spike rather than a patch-reduction target for this alpha line.
