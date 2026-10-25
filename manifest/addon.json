@@ -2,18 +2,18 @@
   "schemaVersion": 1,
   "id": "opencode-background-tasks",
   "name": "OpenCode Background Tasks",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "channel": "alpha",
   "repositoryReady": true,
   "distribution": {
     "installerContract": "scripts/install.sh",
-    "preferredOpenCodeVersion": "1.18.35",
+    "preferredOpenCodeVersion": "1.19.4",
     "sourceRepository": "https://github.com/anomalyco/opencode.git",
     "bun": {
-      "version": "1.3.14",
+      "version": "1.4.4",
       "asset": "bun-linux-x64.zip",
-      "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
-      "sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f"
+      "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip",
+      "sha256": "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
     }
   },
   "plugins": [
@@ -72,7 +72,8 @@
       "1.18.17": "patches/opencode/1.18.17.patch",
       "1.18.18": "patches/opencode/1.18.17.patch",
       "1.18.30": "patches/opencode/1.18.17.patch",
-      "1.18.35": "patches/opencode/1.18.17.patch"
+      "1.18.35": "patches/opencode/1.18.17.patch",
+      "1.19.4": "patches/opencode/1.19.4.patch"
     }
   },
   "state": {

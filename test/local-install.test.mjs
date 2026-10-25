@@ -7,6 +7,7 @@ import { parseArgs } from "../lib/cli.mjs";
 import {
   adoptManagedLocalInstall,
   backupStorageRoots,
+  managedBuildVersion,
   prepareStorageBackup,
   restoreManagedLocalInstall,
 } from "../lib/local-install.mjs";
@@ -25,6 +26,13 @@ async function writeExecutable(filePath, content) {
   await fs.writeFile(filePath, content, "utf8");
   await fs.chmod(filePath, 0o755);
 }
+
+test("managed build version includes the OpenCode version and build timestamp", () => {
+  assert.equal(
+    managedBuildVersion("1.19.4", new Date("2026-10-07T17:38:59.000Z")),
+    "1.19.4--202610071738",
+  );
+});
 
 test("restore preserves auxiliary binaries installed after adoption", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-background-restore-"));

@@ -1,0 +1,1138 @@
+diff --git a/packages/opencode/src/plugin/tui/runtime.ts b/packages/opencode/src/plugin/tui/runtime.ts
+index 2a88ad3..a4283d8 100644
+--- a/packages/opencode/src/plugin/tui/runtime.ts
++++ b/packages/opencode/src/plugin/tui/runtime.ts
+@@ -618,6 +618,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
+     keymap,
+     mode: createScopedMode(api.mode, scope),
+     route,
++    session: api.session,
+     ui: api.ui,
+     tuiConfig: api.tuiConfig,
+     kv: api.kv,
+diff --git a/packages/opencode/test/fixture/tui-plugin.ts b/packages/opencode/test/fixture/tui-plugin.ts
+index 5d93139..deabd88 100644
+--- a/packages/opencode/test/fixture/tui-plugin.ts
++++ b/packages/opencode/test/fixture/tui-plugin.ts
+@@ -255,6 +255,10 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
+         return { name: "home" }
+       },
+     },
++    session: {
++      registerAdapter: () => () => {},
++      registerListAdapter: () => () => {},
++    },
+     ui: {
+       Dialog: () => null,
+       DialogAlert: () => null,
+diff --git a/packages/plugin/src/tui.ts b/packages/plugin/src/tui.ts
+index 6781216..9628076 100644
+--- a/packages/plugin/src/tui.ts
++++ b/packages/plugin/src/tui.ts
+@@ -212,6 +212,19 @@ export type TuiPromptProps = {
+   sessionID?: string
+   visible?: boolean
+   disabled?: boolean
++  allowSubmitWhenBusy?: boolean
++  submit?: (input: {
++    sessionID?: string
++    input: string
++    mode?: "normal" | "shell"
++    parts: TuiPromptInfo["parts"]
++    agent: string
++    model: {
++      providerID: string
++      modelID: string
++      variant?: string
++    }
++  }) => Promise<boolean | void> | boolean | void
+   onSubmit?: () => void
+   ref?: (ref: TuiPromptRef | undefined) => void
+   hint?: JSX.Element
+@@ -470,6 +483,10 @@ export type TuiHostSlotMap = {
+   session_prompt_right: {
+     session_id: string
+   }
++  session_notice: {
++    session_id: string
++    active_session_id: string
++  }
+   home_bottom: {}
+   home_footer: {}
+   sidebar_title: {
+@@ -578,6 +595,52 @@ export type TuiWorkspace = {
+   set: (workspaceID?: string) => void
+ }
+ 
++export type TuiSessionInfo = Pick<Session, "id" | "parentID">
++
++export type TuiSessionProjection = {
++  activeSessionID?: string
++  visibleMessages?: ReadonlyArray<Message>
++  promptTargetSessionID?: string
++  promptVisible?: boolean
++  allowSubmitWhenBusy?: boolean
++  permissionSessionID?: string
++  questionSessionID?: string
++  inspection?: {
++    active: boolean
++  }
++}
++
++export type TuiSessionAdapterContext = {
++  routeSessionID: string
++  routeSession?: TuiSessionInfo
++  sessions: ReadonlyArray<TuiSessionInfo>
++  messagesBySession: Readonly<Record<string, ReadonlyArray<Message>>>
++  permissionsBySession: Readonly<Record<string, ReadonlyArray<PermissionRequest>>>
++  questionsBySession: Readonly<Record<string, ReadonlyArray<QuestionRequest>>>
++}
++
++export type TuiSessionAdapter = {
++  id: string
++  priority?: number
++  resolve: (context: TuiSessionAdapterContext) => TuiSessionProjection | undefined
++}
++
++export type TuiSessionListAdapterContext = {
++  routeCurrent: TuiRouteCurrent
++}
++
++export type TuiSessionListProjection = {
++  currentSessionID?: string
++  navigateToSessionID?: (selectedSessionID: string) => string | undefined
++  beforeNavigate?: (selectedSessionID: string) => void
++}
++
++export type TuiSessionListAdapter = {
++  id: string
++  priority?: number
++  resolve: (context: TuiSessionListAdapterContext) => TuiSessionListProjection | undefined
++}
++
+ export type TuiPluginApi = {
+   app: TuiApp
+   attention: TuiAttention
+@@ -596,6 +659,10 @@ export type TuiPluginApi = {
+     navigate: (name: string, params?: Record<string, unknown>) => void
+     readonly current: TuiRouteCurrent
+   }
++  session: {
++    registerAdapter: (adapter: TuiSessionAdapter) => () => void
++    registerListAdapter: (adapter: TuiSessionListAdapter) => () => void
++  }
+   ui: {
+     Dialog: (props: TuiDialogProps) => JSX.Element
+     DialogAlert: (props: TuiDialogAlertProps) => JSX.Element
+diff --git a/packages/tui/src/component/dialog-session-list.tsx b/packages/tui/src/component/dialog-session-list.tsx
+index c508fc6..1e60b33 100644
+--- a/packages/tui/src/component/dialog-session-list.tsx
++++ b/packages/tui/src/component/dialog-session-list.tsx
+@@ -18,6 +18,7 @@ import { errorMessage } from "../util/error"
+ import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
+ import { useCommandShortcut } from "../keymap"
+ import { useEvent } from "../context/event"
++import { resolveSessionListProjection, subscribeSessionListAdapters } from "../plugin/adapters"
+ 
+ type SessionListFilter = { scope?: "project"; path?: string }
+ 
+@@ -56,6 +57,7 @@ export function DialogSessionList() {
+   const [deleted, setDeleted] = createSignal(new Set<string>())
+   const [search, setSearch] = createDebouncedSignal("", 150)
+   const deleteHint = useCommandShortcut("session.delete")
++  const [sessionListAdapterRevision, setSessionListAdapterRevision] = createSignal(0)
+   const quickSwitch1 = useCommandShortcut("session.quick_switch.1")
+   const quickSwitch9 = useCommandShortcut("session.quick_switch.9")
+ 
+@@ -75,7 +77,22 @@ export function DialogSessionList() {
+     },
+   )
+ 
+-  const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
++  const listProjection = createMemo(() => {
++    sessionListAdapterRevision()
++    return resolveSessionListProjection({
++      routeCurrent:
++        route.data.type === "home"
++          ? { name: "home" }
++          : route.data.type === "session"
++            ? { name: "session", params: { sessionID: route.data.sessionID, prompt: route.data.prompt } }
++            : { name: route.data.id, params: route.data.data },
++    })
++  })
++  const currentSessionID = createMemo(() => {
++    const projected = listProjection()?.currentSessionID
++    if (projected) return projected
++    return route.data.type === "session" ? route.data.sessionID : undefined
++  })
+   const sessions = createMemo(() => {
+     const result = searchResults() ?? browseResults() ?? sync.data.session
+     const synced = new Map(sync.data.session.map((session) => [session.id, session]))
+@@ -266,6 +283,8 @@ export function DialogSessionList() {
+   })
+ 
+   onMount(() => {
++    const unsubscribe = subscribeSessionListAdapters(() => setSessionListAdapterRevision((value) => value + 1))
++    onCleanup(unsubscribe)
+     dialog.setSize("large")
+   })
+ 
+@@ -281,9 +300,11 @@ export function DialogSessionList() {
+         setToDelete(undefined)
+       }}
+       onSelect={(option) => {
++        listProjection()?.beforeNavigate?.(option.value)
++        const sessionID = listProjection()?.navigateToSessionID?.(option.value) ?? option.value
+         route.navigate({
+           type: "session",
+-          sessionID: option.value,
++          sessionID,
+         })
+         dialog.clear()
+       }}
+diff --git a/packages/tui/src/component/prompt/index.tsx b/packages/tui/src/component/prompt/index.tsx
+index c48c751..7acec16 100644
+--- a/packages/tui/src/component/prompt/index.tsx
++++ b/packages/tui/src/component/prompt/index.tsx
+@@ -64,6 +64,19 @@ export type PromptProps = {
+   sessionID?: string
+   visible?: boolean
+   disabled?: boolean
++  allowSubmitWhenBusy?: boolean
++  submit?: (input: {
++    sessionID?: string
++    input: string
++    mode?: "normal" | "shell"
++    parts: PromptInfo["parts"]
++    agent: string
++    model: {
++      providerID: string
++      modelID: string
++      variant?: string
++    }
++  }) => Promise<boolean | void> | boolean | void
+   onSubmit?: () => void
+   ref?: (ref: PromptRef | undefined) => void
+   hint?: JSX.Element
+@@ -160,7 +173,15 @@ export function Prompt(props: PromptProps) {
+   const tuiConfig = useTuiConfig()
+   const dialog = useDialog()
+   const toast = useToast()
+-  const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
++  const activeSessionID = createMemo(() => {
++    if (props.sessionID) return props.sessionID
++    return route.data.type === "session" ? route.data.sessionID : undefined
++  })
++  const status = createMemo(() => {
++    const current = sync.data.session_status?.[activeSessionID() ?? ""] ?? { type: "idle" }
++    if (props.allowSubmitWhenBusy && current.type !== "idle") return { type: "idle" as const }
++    return current
++  })
+   const history = usePromptHistory()
+   const stash = usePromptStash()
+   const keymap = useOpencodeKeymap()
+@@ -403,7 +424,8 @@ export function Prompt(props: PromptProps) {
+             setStore("mode", "normal")
+             return
+           }
+-          if (!props.sessionID) return
++          const sessionID = activeSessionID()
++          if (!sessionID) return
+ 
+           setStore("interrupt", store.interrupt + 1)
+ 
+@@ -413,7 +435,7 @@ export function Prompt(props: PromptProps) {
+ 
+           if (store.interrupt >= 2) {
+             void sdk.client.session.abort({
+-              sessionID: props.sessionID,
++              sessionID,
+             })
+             setStore("interrupt", 0)
+           }
+@@ -971,10 +993,11 @@ export function Prompt(props: PromptProps) {
+       return false
+     }
+ 
+-    const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
++    const currentSessionID = activeSessionID()
++    const workspaceSession = currentSessionID ? sync.session.get(currentSessionID) : undefined
+     const workspaceID = workspaceSession?.workspaceID
+     const workspaceStatus = workspaceID ? (project.workspace.status(workspaceID) ?? "error") : undefined
+-    if (props.sessionID && workspaceID && workspaceStatus !== "connected") {
++    if (currentSessionID && workspaceID && workspaceStatus !== "connected") {
+       dialog.replace(() => (
+         <DialogWorkspaceUnavailable
+           onRestore={() => {
+@@ -987,7 +1010,7 @@ export function Prompt(props: PromptProps) {
+     }
+ 
+     const variant = local.model.variant.current()
+-    let sessionID = props.sessionID
++    let sessionID = currentSessionID
+     let finishMoveProgress = false
+     if (sessionID == null) {
+       const selectedWorkspace = workspace.selection()
+@@ -1091,32 +1114,47 @@ export function Prompt(props: PromptProps) {
+       })
+     } else {
+       move.startSubmit()
+-      sdk.client.session
+-        .prompt(
+-          {
+-            sessionID,
+-            ...selectedModel,
+-            agent: agent.name,
+-            model: selectedModel,
+-            variant,
+-            parts: [
+-              ...editorParts,
+-              {
+-                type: "text",
+-                text: inputText,
+-              },
+-              ...nonTextParts,
+-            ],
+-          },
+-          { throwOnError: true },
+-        )
+-        .catch((error) => {
+-          toast.show({
+-            title: "Failed to send prompt",
+-            message: errorMessage(error),
+-            variant: "error",
++      const promptParts = [
++        ...editorParts,
++        {
++          type: "text" as const,
++          text: inputText,
++        },
++        ...nonTextParts,
++      ]
++      const handled = await props.submit?.({
++        sessionID,
++        input: inputText,
++        mode: currentMode,
++        parts: promptParts,
++        agent: agent.name,
++        model: {
++          providerID: selectedModel.providerID,
++          modelID: selectedModel.modelID,
++          variant,
++        },
++      })
++      if (!handled) {
++        sdk.client.session
++          .prompt(
++            {
++              sessionID,
++              ...selectedModel,
++              agent: agent.name,
++              model: selectedModel,
++              variant,
++              parts: promptParts,
++            },
++            { throwOnError: true },
++          )
++          .catch((error) => {
++            toast.show({
++              title: "Failed to send prompt",
++              message: errorMessage(error),
++              variant: "error",
++            })
+           })
+-        })
++      }
+       if (editorParts.length > 0) editor.markSelectionSent()
+     }
+     history.append({
+@@ -1132,7 +1170,7 @@ export function Prompt(props: PromptProps) {
+     props.onSubmit?.()
+ 
+     // temporary hack to make sure the message is sent
+-    if (!props.sessionID) {
++    if (!currentSessionID) {
+       if (editorParts.length > 0) editor.preserveSelectionFromNewSession()
+       setTimeout(() => {
+         route.navigate({
+diff --git a/packages/tui/src/context/local.tsx b/packages/tui/src/context/local.tsx
+index a05d315..95a5af8 100644
+--- a/packages/tui/src/context/local.tsx
++++ b/packages/tui/src/context/local.tsx
+@@ -48,6 +48,41 @@ export function recentModels(
+     .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
+ }
+ 
++export function agentModelVariantKey(
++  agentName: string | undefined,
++  model: { providerID: string; modelID: string } | undefined,
++) {
++  if (!agentName || !model) return undefined
++  return `${agentName}/${model.providerID}/${model.modelID}`
++}
++
++export function configuredAgentVariant(
++  agent: { variant?: string; model?: { providerID: string; modelID?: string; id?: string } } | undefined,
++  model: { providerID: string; modelID: string } | undefined,
++) {
++  if (!agent?.variant || !agent.model || !model) return undefined
++  const agentModelID = agent.model.modelID ?? agent.model.id
++  if (agent.model.providerID !== model.providerID || agentModelID !== model.modelID) return undefined
++  return agent.variant
++}
++
++export function selectModelVariant(input: {
++  agent?: { name?: string; variant?: string; model?: { providerID: string; modelID?: string; id?: string } }
++  model?: { providerID: string; modelID: string }
++  variants: string[]
++  overrides: Record<string, string | undefined>
++}) {
++  const key = agentModelVariantKey(input.agent?.name, input.model)
++  const selected = key ? input.overrides[key] : undefined
++  const configured = configuredAgentVariant(input.agent, input.model)
++  const current = selected ?? configured
++  return {
++    selected,
++    configured,
++    current: current && input.variants.includes(current) ? current : undefined,
++  }
++}
++
+ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+   name: "Local",
+   init: () => {
+@@ -360,17 +395,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+           })
+         },
+         variant: {
++          selection() {
++            return selectModelVariant({
++              agent: agent.current(),
++              model: currentModel(),
++              variants: this.list(),
++              overrides: modelStore.variant,
++            })
++          },
+           selected() {
+-            const m = currentModel()
+-            if (!m) return undefined
+-            const key = `${m.providerID}/${m.modelID}`
+-            return modelStore.variant[key]
++            const selection = this.selection()
++            return selection.selected ?? selection.current
+           },
+           current() {
+-            const v = this.selected()
+-            if (!v) return undefined
+-            if (!this.list().includes(v)) return undefined
+-            return v
++            return this.selection().current
+           },
+           list() {
+             const m = currentModel()
+@@ -383,7 +421,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
+           set(value: string | undefined) {
+             const m = currentModel()
+             if (!m) return
+-            const key = `${m.providerID}/${m.modelID}`
++            const key = agentModelVariantKey(agent.current()?.name, m)
++            if (!key) return
+             setModelStore("variant", key, value ?? "default")
+             save()
+           },
+diff --git a/packages/tui/src/plugin/adapters.tsx b/packages/tui/src/plugin/adapters.tsx
+index fef0ec8..a847c4f 100644
+--- a/packages/tui/src/plugin/adapters.tsx
++++ b/packages/tui/src/plugin/adapters.tsx
+@@ -1,4 +1,14 @@
+-import type { TuiDialogSelectOption, TuiPluginApi, TuiSlotProps } from "@opencode-ai/plugin/tui"
++import type {
++  TuiDialogSelectOption,
++  TuiPluginApi,
++  TuiSessionAdapter,
++  TuiSessionAdapterContext,
++  TuiSessionListAdapter,
++  TuiSessionListAdapterContext,
++  TuiSessionListProjection,
++  TuiSessionProjection,
++  TuiSlotProps,
++} from "@opencode-ai/plugin/tui"
+ import type { TuiConfig } from "../config"
+ import type { useEvent } from "../context/event"
+ import type { useRoute } from "../context/route"
+@@ -38,6 +48,103 @@ type Input = {
+   Slot: TuiPluginApi["ui"]["Slot"]
+ }
+ 
++type SessionAdapterEntry = {
++  key: symbol
++  order: number
++  adapter: TuiSessionAdapter
++}
++
++type SessionListAdapterEntry = {
++  key: symbol
++  order: number
++  adapter: TuiSessionListAdapter
++}
++
++const sessionAdapters: SessionAdapterEntry[] = []
++const sessionAdapterListeners = new Set<() => void>()
++let sessionAdapterOrder = 0
++const sessionListAdapters: SessionListAdapterEntry[] = []
++const sessionListAdapterListeners = new Set<() => void>()
++let sessionListAdapterOrder = 0
++
++function sessionAdapterNotify() {
++  for (const listener of sessionAdapterListeners) listener()
++}
++
++function sessionListAdapterNotify() {
++  for (const listener of sessionListAdapterListeners) listener()
++}
++
++function sessionAdapterRegister(adapter: TuiSessionAdapter) {
++  const key = Symbol()
++  sessionAdapters.push({ key, order: sessionAdapterOrder++, adapter })
++  sessionAdapterNotify()
++
++  return () => {
++    const index = sessionAdapters.findIndex((entry) => entry.key === key)
++    if (index === -1) return
++    sessionAdapters.splice(index, 1)
++    sessionAdapterNotify()
++  }
++}
++
++function sessionListAdapterRegister(adapter: TuiSessionListAdapter) {
++  const key = Symbol()
++  sessionListAdapters.push({ key, order: sessionListAdapterOrder++, adapter })
++  sessionListAdapterNotify()
++
++  return () => {
++    const index = sessionListAdapters.findIndex((entry) => entry.key === key)
++    if (index === -1) return
++    sessionListAdapters.splice(index, 1)
++    sessionListAdapterNotify()
++  }
++}
++
++function currentSessionAdapter(): TuiSessionAdapter | undefined {
++  return sessionAdapters.reduce<SessionAdapterEntry | undefined>((best, entry) => {
++    if (!best) return entry
++    const entryPriority = entry.adapter.priority ?? 0
++    const bestPriority = best.adapter.priority ?? 0
++    if (entryPriority > bestPriority) return entry
++    if (entryPriority < bestPriority) return best
++    return entry.order > best.order ? entry : best
++  }, undefined)?.adapter
++}
++
++function currentSessionListAdapter(): TuiSessionListAdapter | undefined {
++  return sessionListAdapters.reduce<SessionListAdapterEntry | undefined>((best, entry) => {
++    if (!best) return entry
++    const entryPriority = entry.adapter.priority ?? 0
++    const bestPriority = best.adapter.priority ?? 0
++    if (entryPriority > bestPriority) return entry
++    if (entryPriority < bestPriority) return best
++    return entry.order > best.order ? entry : best
++  }, undefined)?.adapter
++}
++
++export function resolveSessionProjection(input: TuiSessionAdapterContext): TuiSessionProjection | undefined {
++  return currentSessionAdapter()?.resolve(input)
++}
++
++export function resolveSessionListProjection(input: TuiSessionListAdapterContext): TuiSessionListProjection | undefined {
++  return currentSessionListAdapter()?.resolve(input)
++}
++
++export function subscribeSessionAdapters(listener: () => void) {
++  sessionAdapterListeners.add(listener)
++  return () => {
++    sessionAdapterListeners.delete(listener)
++  }
++}
++
++export function subscribeSessionListAdapters(listener: () => void) {
++  sessionListAdapterListeners.add(listener)
++  return () => {
++    sessionListAdapterListeners.delete(listener)
++  }
++}
++
+ function routeNavigate(route: ReturnType<typeof useRoute>, name: string, params?: Record<string, unknown>) {
+   if (name === "home") {
+     route.navigate({ type: "home" })
+@@ -204,6 +311,14 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
+         return routeCurrent(input.route)
+       },
+     },
++    session: {
++      registerAdapter(adapter) {
++        return sessionAdapterRegister(adapter)
++      },
++      registerListAdapter(adapter) {
++        return sessionListAdapterRegister(adapter)
++      },
++    },
+     ui: {
+       Dialog(props) {
+         return (
+@@ -245,6 +360,8 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
+             sessionID={props.sessionID}
+             visible={props.visible}
+             disabled={props.disabled}
++            allowSubmitWhenBusy={props.allowSubmitWhenBusy}
++            submit={props.submit}
+             onSubmit={props.onSubmit}
+             ref={props.ref}
+             hint={props.hint}
+diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
+index e1f554f..5de0539 100644
+--- a/packages/tui/src/routes/session/index.tsx
++++ b/packages/tui/src/routes/session/index.tsx
+@@ -76,6 +76,7 @@ import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode
+ import { getScrollAcceleration } from "../../util/scroll"
+ import { collapseToolOutput } from "../../util/collapse-tool-output"
+ import { usePluginRuntime } from "../../plugin/runtime"
++import { resolveSessionProjection, subscribeSessionAdapters } from "../../plugin/adapters"
+ import { DialogRetryAction } from "../../component/dialog-retry-action"
+ import { getRevertDiffFiles } from "../../util/revert-diff"
+ import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useOpencodeKeymap } from "../../keymap"
+@@ -190,7 +191,8 @@ export function Session() {
+   const kv = useKV()
+   const { theme } = useTheme()
+   const promptRef = usePromptRef()
+-  const session = createMemo(() => sync.session.get(route.sessionID))
++  const shellSessionID = createMemo(() => route.sessionID)
++  const session = createMemo(() => sync.session.get(shellSessionID()))
+   const location = createMemo(() => {
+     const current = session()
+     return current ? { directory: current.directory, workspaceID: current.workspaceID } : undefined
+@@ -207,12 +209,67 @@ export function Session() {
+       .filter((x) => x.parentID === parentID || x.id === parentID)
+       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+   })
+-  const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
++  const [sessionAdapterRevision, setSessionAdapterRevision] = createSignal(0)
++  onMount(() => {
++    const unsubscribe = subscribeSessionAdapters(() => setSessionAdapterRevision((value) => value + 1))
++    onCleanup(unsubscribe)
++  })
++  const defaultPermissions = createMemo(() => {
++    if (session()?.parentID) return []
++    return children().flatMap((item) => sync.data.permission[item.id] ?? [])
++  })
++  const defaultQuestions = createMemo(() => {
++    if (session()?.parentID) return []
++    return children().flatMap((item) => sync.data.question[item.id] ?? [])
++  })
++  const sessionProjection = createMemo(() => {
++    sessionAdapterRevision()
++    const routeSessionID = shellSessionID()
++    const routeSession = session()
++    const defaultProjection = {
++      activeSessionID: routeSessionID,
++      visibleMessages: sync.data.message[routeSessionID] ?? [],
++      promptTargetSessionID: routeSessionID,
++      promptVisible: !routeSession?.parentID,
++      allowSubmitWhenBusy: false,
++      permissionSessionID: undefined,
++      questionSessionID: undefined,
++      inspection: { active: false },
++    }
++    const projection = resolveSessionProjection({
++      routeSessionID,
++      routeSession: routeSession
++        ? {
++            id: routeSession.id,
++            parentID: routeSession.parentID,
++          }
++        : undefined,
++      sessions: sync.data.session,
++      messagesBySession: sync.data.message,
++      permissionsBySession: sync.data.permission,
++      questionsBySession: sync.data.question,
++    })
++    return {
++      activeSessionID: projection?.activeSessionID ?? defaultProjection.activeSessionID,
++      visibleMessages: projection?.visibleMessages ?? defaultProjection.visibleMessages,
++      promptTargetSessionID: projection?.promptTargetSessionID ?? defaultProjection.promptTargetSessionID,
++      promptVisible: projection?.promptVisible ?? defaultProjection.promptVisible,
++      allowSubmitWhenBusy: projection?.allowSubmitWhenBusy ?? defaultProjection.allowSubmitWhenBusy,
++      permissionSessionID: projection?.permissionSessionID,
++      questionSessionID: projection?.questionSessionID,
++      inspection: projection?.inspection ?? defaultProjection.inspection,
++    }
++  })
++  const activeSessionID = createMemo(() => sessionProjection().activeSessionID)
++  const promptTargetSessionID = createMemo(() => sessionProjection().promptTargetSessionID ?? activeSessionID())
++  const activeSession = createMemo(() => sync.session.get(activeSessionID()))
++  const activeSessionMessages = createMemo(() => sync.data.message[activeSessionID()] ?? [])
++  const messages = createMemo(() => sessionProjection().visibleMessages)
+   const messagesBeforeRevert = () => {
+-    const messageID = session()?.revert?.messageID
+-    if (!messageID) return messages()
+-    const index = messages().findIndex((message) => message.id === messageID)
+-    return index === -1 ? messages() : messages().slice(0, index)
++    const messageID = activeSession()?.revert?.messageID
++    if (!messageID) return activeSessionMessages()
++    const index = activeSessionMessages().findIndex((message) => message.id === messageID)
++    return index === -1 ? activeSessionMessages() : activeSessionMessages().slice(0, index)
+   }
+   const foregroundTasks = createMemo(() =>
+     sync.data.capabilities.experimentalBackgroundSubagents
+@@ -228,14 +285,17 @@ export function Session() {
+       : [],
+   )
+   const permissions = createMemo(() => {
+-    if (session()?.parentID) return []
+-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
++    const sessionID = sessionProjection().permissionSessionID
++    if (!sessionID) return defaultPermissions()
++    return sync.data.permission[sessionID] ?? []
+   })
+   const questions = createMemo(() => {
+-    if (session()?.parentID) return []
+-    return children().flatMap((x) => sync.data.question[x.id] ?? [])
++    const sessionID = sessionProjection().questionSessionID
++    if (!sessionID) return defaultQuestions()
++    return sync.data.question[sessionID] ?? []
+   })
+-  const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
++  const inspectionActive = createMemo(() => sessionProjection().inspection?.active === true)
++  const promptVisible = createMemo(() => sessionProjection().promptVisible && permissions().length === 0 && questions().length === 0)
+   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
+ 
+   const pending = createMemo(() => {
+@@ -321,11 +381,18 @@ export function Session() {
+     })
+   })
+ 
++  createEffect(() => {
++    const sessionID = activeSessionID()
++    if (!sessionID || sessionID === route.sessionID) return
++    if (sync.data.message[sessionID]?.length) return
++    void sync.session.sync(sessionID).catch(() => undefined)
++  })
++
+   let lastSwitch: string | undefined = undefined
+   event.on("message.part.updated", (evt) => {
+     const part = evt.properties.part
+     if (part.type !== "tool") return
+-    if (part.sessionID !== route.sessionID) return
++    if (part.sessionID !== activeSessionID()) return
+     if (part.state.status !== "completed") return
+     if (part.id === lastSwitch) return
+ 
+@@ -353,7 +420,7 @@ export function Session() {
+   const renderer = useRenderer()
+ 
+   event.on("session.status", (evt) => {
+-    if (evt.properties.sessionID !== route.sessionID) return
++    if (evt.properties.sessionID !== activeSessionID()) return
+     if (evt.properties.status.type !== "retry") return
+     if (!evt.properties.status.action) return
+     if (dialog.stack.length > 0) return
+@@ -469,7 +536,7 @@ export function Session() {
+         name: "rename",
+       },
+       run: () => {
+-        dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
++        dialog.replace(() => <DialogSessionRename session={shellSessionID()} />)
+       },
+     },
+     {
+@@ -488,7 +555,7 @@ export function Session() {
+               })
+               if (child) scroll.scrollBy(child.y - scroll.y - 1)
+             }}
+-            sessionID={route.sessionID}
++            sessionID={activeSessionID()}
+             setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+           />
+         ))
+@@ -511,7 +578,7 @@ export function Session() {
+               })
+               if (child) scroll.scrollBy(child.y - scroll.y - 1)
+             }}
+-            sessionID={route.sessionID}
++            sessionID={activeSessionID()}
+           />
+         ))
+       },
+@@ -535,7 +602,7 @@ export function Session() {
+           return
+         }
+         void sdk.client.session.summarize({
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           modelID: selectedModel.modelID,
+           providerID: selectedModel.providerID,
+         })
+@@ -550,13 +617,13 @@ export function Session() {
+         name: "undo",
+       },
+       run: async () => {
+-        const status = sync.data.session_status?.[route.sessionID]
+-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
++        const status = sync.data.session_status?.[activeSessionID()]
++        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: activeSessionID() }).catch(() => {})
+         const message = messagesBeforeRevert().findLast((item) => item.role === "user")
+         if (!message) return
+         void sdk.client.session
+           .revert({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+             messageID: message.id,
+           })
+           .then(() => {
+@@ -582,24 +649,24 @@ export function Session() {
+       title: "Redo",
+       value: "session.redo",
+       category: "Session",
+-      enabled: !!session()?.revert?.messageID,
++      enabled: !!activeSession()?.revert?.messageID,
+       slash: {
+         name: "redo",
+       },
+       run: () => {
+         dialog.clear()
+-        const messageID = session()?.revert?.messageID
++        const messageID = activeSession()?.revert?.messageID
+         if (!messageID) return
+-        const message = messages().find((x) => x.role === "user" && x.id > messageID)
++        const message = activeSessionMessages().find((x) => x.role === "user" && x.id > messageID)
+         if (!message) {
+           void sdk.client.session.unrevert({
+-            sessionID: route.sessionID,
++            sessionID: activeSessionID(),
+           })
+           prompt?.set({ input: "", parts: [] })
+           return
+         }
+         void sdk.client.session.revert({
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           messageID: message.id,
+         })
+       },
+@@ -769,7 +836,7 @@ export function Session() {
+       category: "Session",
+       hidden: true,
+       run: () => {
+-        const messages = sync.data.message[route.sessionID]
++        const messages = sync.data.message[activeSessionID()]
+         if (!messages || !messages.length) return
+ 
+         // Find the most recent user message with non-ignored, non-synthetic text parts
+@@ -857,9 +924,9 @@ export function Session() {
+       },
+       run: async () => {
+         try {
+-          const sessionData = session()
++          const sessionData = activeSession()
+           if (!sessionData) return
+-          const sessionMessages = messages()
++          const sessionMessages = activeSessionMessages()
+           const transcript = formatTranscript(
+             sessionData,
+             sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+@@ -887,9 +954,9 @@ export function Session() {
+       },
+       run: async () => {
+         try {
+-          const sessionData = session()
++          const sessionData = activeSession()
+           if (!sessionData) return
+-          const sessionMessages = messages()
++          const sessionMessages = activeSessionMessages()
+ 
+           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
+ 
+@@ -961,7 +1028,7 @@ export function Session() {
+       enabled: foregroundTasks().length > 0,
+       run: () => {
+         void sdk.client.experimental.session.background({
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           workspace: project.workspace.current(),
+         })
+         dialog.clear()
+@@ -972,6 +1039,7 @@ export function Session() {
+       value: "session.child.first",
+       category: "Session",
+       hidden: true,
++      enabled: !inspectionActive(),
+       run: () => {
+         dialog.clear()
+         moveFirstChild()
+@@ -982,7 +1050,7 @@ export function Session() {
+       value: "session.parent",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       run: childSessionHandler(() => {
+         const parentID = session()?.parentID
+         if (parentID) {
+@@ -999,7 +1067,7 @@ export function Session() {
+       value: "session.child.next",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       run: childSessionHandler(() => {
+         dialog.clear()
+         moveChild(1)
+@@ -1010,7 +1078,7 @@ export function Session() {
+       value: "session.child.previous",
+       category: "Session",
+       hidden: true,
+-      enabled: !!session()?.parentID,
++      enabled: !!session()?.parentID && !inspectionActive(),
+       run: childSessionHandler(() => {
+         dialog.clear()
+         moveChild(-1)
+@@ -1054,12 +1122,12 @@ export function Session() {
+     bindings: tuiConfig.keybinds.get("session.background"),
+   }))
+ 
+-  const revertInfo = createMemo(() => session()?.revert)
++  const revertInfo = createMemo(() => activeSession()?.revert)
+   const revertMessageID = createMemo(() => revertInfo()?.messageID)
+   const revertMessageIndex = createMemo(() => {
+     const messageID = revertMessageID()
+     if (!messageID) return -1
+-    return messages().findIndex((message) => message.id === messageID)
++    return activeSessionMessages().findIndex((message) => message.id === messageID)
+   })
+ 
+   const revertDiffFiles = createMemo(() => getRevertDiffFiles(revertInfo()?.diff ?? ""))
+@@ -1069,7 +1137,7 @@ export function Session() {
+     if (!messageID) return []
+     const index = revertMessageIndex()
+     if (index === -1) return []
+-    return messages()
++    return activeSessionMessages()
+       .slice(index)
+       .filter((message) => message.role === "user")
+   })
+@@ -1087,7 +1155,7 @@ export function Session() {
+   })
+ 
+   // snap to bottom when session changes
+-  createEffect(on(() => route.sessionID, toBottom))
++  createEffect(on(() => `${route.sessionID}:${activeSessionID()}`, toBottom))
+ 
+   return (
+     <LocationProvider location={location()}>
+@@ -1096,7 +1164,7 @@ export function Session() {
+           get width() {
+             return contentWidth()
+           },
+-          sessionID: route.sessionID,
++          sessionID: activeSessionID(),
+           conceal,
+           thinkingMode,
+           showThinking,
+@@ -1134,7 +1202,7 @@ export function Session() {
+                 <For each={messages()}>
+                   {(message, index) => (
+                     <Switch>
+-                      <Match when={message.id === revert()?.messageID}>
++                      <Match when={message.sessionID === activeSessionID() && message.id === revert()?.messageID}>
+                         {(function () {
+                           const redoShortcut = useCommandShortcut("session.redo")
+                           const [hover, setHover] = createSignal(false)
+@@ -1195,7 +1263,11 @@ export function Session() {
+                         })()}
+                       </Match>
+                       <Match
+-                        when={revert()?.messageID && revertMessageIndex() !== -1 && index() >= revertMessageIndex()}
++                        when={
++                          message.sessionID === activeSessionID() &&
++                          revert()?.messageID &&
++                          message.id >= revert()!.messageID
++                        }
+                       >
+                         <></>
+                       </Match>
+@@ -1207,7 +1279,7 @@ export function Session() {
+                             dialog.replace(() => (
+                               <DialogMessage
+                                 messageID={message.id}
+-                                sessionID={route.sessionID}
++                                sessionID={message.sessionID}
+                                 setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                               />
+                             ))
+@@ -1229,6 +1301,11 @@ export function Session() {
+                 </For>
+               </scrollbox>
+               <box flexShrink={0}>
++                <pluginRuntime.Slot
++                  name="session_notice"
++                  session_id={shellSessionID()}
++                  active_session_id={activeSessionID()}
++                />
+                 <Show when={permissions().length > 0}>
+                   <PermissionPrompt
+                     request={permissions()[0]}
+@@ -1241,28 +1318,29 @@ export function Session() {
+                     directory={sync.session.get(questions()[0].sessionID)?.directory}
+                   />
+                 </Show>
+-                <Show when={session()?.parentID}>
++                <Show when={session()?.parentID && !promptVisible() && !inspectionActive()}>
+                   <SubagentFooter />
+                 </Show>
+-                <Show when={visible()}>
++                <Show when={promptVisible()}>
+                   <pluginRuntime.Slot
+                     name="session_prompt"
+                     mode="replace"
+-                    session_id={route.sessionID}
+-                    visible={visible()}
++                    session_id={shellSessionID()}
++                    visible={promptVisible()}
+                     disabled={disabled()}
+                     on_submit={toBottom}
+                     ref={bind}
+                   >
+                     <Prompt
+-                      visible={visible()}
++                      visible={promptVisible()}
+                       ref={bind}
+                       disabled={disabled()}
++                      allowSubmitWhenBusy={sessionProjection().allowSubmitWhenBusy}
+                       onSubmit={() => {
+                         toBottom()
+                       }}
+-                      sessionID={route.sessionID}
+-                      right={<pluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
++                      sessionID={promptTargetSessionID()}
++                      right={<pluginRuntime.Slot name="session_prompt_right" session_id={promptTargetSessionID()} />}
+                     />
+                   </pluginRuntime.Slot>
+                 </Show>
+@@ -1273,7 +1351,7 @@ export function Session() {
+           <Show when={sidebarVisible()}>
+             <Switch>
+               <Match when={wide()}>
+-                <Sidebar sessionID={route.sessionID} />
++                <Sidebar sessionID={shellSessionID()} />
+               </Match>
+               <Match when={!wide()}>
+                 <box
+@@ -1285,7 +1363,7 @@ export function Session() {
+                   alignItems="flex-end"
+                   backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
+                 >
+-                  <Sidebar sessionID={route.sessionID} />
++                  <Sidebar sessionID={shellSessionID()} />
+                 </box>
+               </Match>
+             </Switch>
+diff --git a/packages/tui/test/context/local.test.ts b/packages/tui/test/context/local.test.ts
+index e2f1e45..27f9aee 100644
+--- a/packages/tui/test/context/local.test.ts
++++ b/packages/tui/test/context/local.test.ts
+@@ -1,5 +1,5 @@
+ import { expect, test } from "bun:test"
+-import { parseModel, recentModels } from "../../src/context/local"
++import { agentModelVariantKey, configuredAgentVariant, parseModel, recentModels, selectModelVariant } from "../../src/context/local"
+ 
+ test("parses model IDs containing slashes", () => {
+   expect(parseModel("provider/family/model")).toEqual({
+@@ -20,3 +20,74 @@ test("moves a model to the front, deduplicates, and limits recents", () => {
+     ...recent.slice(6, 10),
+   ])
+ })
++
++test("keys model variant overrides by agent and model", () => {
++  expect(agentModelVariantKey("reviewer", { providerID: "openai", modelID: "gpt-5" })).toBe("reviewer/openai/gpt-5")
++  expect(agentModelVariantKey(undefined, { providerID: "openai", modelID: "gpt-5" })).toBeUndefined()
++})
++
++test("uses the configured agent variant only for the agent model", () => {
++  const agent = {
++    variant: "medium",
++    model: {
++      providerID: "openai",
++      modelID: "gpt-5",
++    },
++  }
++
++  expect(configuredAgentVariant(agent, { providerID: "openai", modelID: "gpt-5" })).toBe("medium")
++  expect(configuredAgentVariant(agent, { providerID: "openai", modelID: "other" })).toBeUndefined()
++})
++
++test("does not leak a variant override between agents sharing a model", () => {
++  const model = { providerID: "openai", modelID: "gpt-5" }
++  const variants = ["low", "medium", "high"]
++  const overrides = {
++    "master-dev/openai/gpt-5": "high",
++  }
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "master-dev",
++        variant: "high",
++        model,
++      },
++      model,
++      variants,
++      overrides,
++    }).current,
++  ).toBe("high")
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "code-inspector",
++        variant: "medium",
++        model,
++      },
++      model,
++      variants,
++      overrides,
++    }).current,
++  ).toBe("medium")
++})
++
++test("allows default to override the configured agent variant", () => {
++  const model = { providerID: "openai", modelID: "gpt-5" }
++
++  expect(
++    selectModelVariant({
++      agent: {
++        name: "code-inspector",
++        variant: "medium",
++        model,
++      },
++      model,
++      variants: ["low", "medium", "high"],
++      overrides: {
++        "code-inspector/openai/gpt-5": "default",
++      },
++    }).current,
++  ).toBeUndefined()
++})
+diff --git a/packages/tui/test/fixture/tui-plugin.ts b/packages/tui/test/fixture/tui-plugin.ts
+index e9fce42..75b2b51 100644
+--- a/packages/tui/test/fixture/tui-plugin.ts
++++ b/packages/tui/test/fixture/tui-plugin.ts
+@@ -28,6 +28,10 @@ export function createTuiPluginApi(opts: Opts = {}) {
+       },
+       ready: true,
+     },
++    session: {
++      registerAdapter: () => () => {},
++      registerListAdapter: () => () => {},
++    },
+     state: { session: { get: () => undefined, ...opts.state?.session } },
+     theme: { current: new Proxy({}, { get: () => color }) },
+     tuiConfig: createTuiResolvedConfig(),

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- se agrega soporte para OpenCode `1.19.4` con Bun `1.4.4` y un patch versionado propio que porta el patch `1.18.17` eliminando únicamente los hunks de share/unshare retirados upstream; las builds administradas ahora muestran `<opencode-version>--<timestamp>` sin presentarse como releases oficiales; pasaron typechecks de `plugin`, `tui` y `opencode`, 205 tests TUI, build Linux x64 y validación del lifecycle; versión del addon `0.1.0-alpha.8`
 - se corrige la derivación visual de estado para delegaciones lanzadas por agentes: el TUI y `delegation_list` reconcilian el `meta.json` persistido contra la sesión hija viva para mostrar `needs_input` ante permisos/preguntas y `complete` cuando una sesión marcada previamente como `running`/`timeout` ya terminó
 - `scripts/reapply.mjs` ahora usa `backupPath` al reemplazar plugins compatibles, igual que `enable`, para que el despliegue incremental de plugins modificados no falle después del dry-run
 - `adopt-local-install` agrega `--skip-storage-backup` para recuperaciones explícitas cuando no hay espacio para duplicar el storage de OpenCode; además limpia backups parciales si `backupStorageRoots` falla, evitando consumir disco con intentos incompletos

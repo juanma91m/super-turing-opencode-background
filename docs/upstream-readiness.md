@@ -57,4 +57,5 @@ That means the remaining blocker is no longer feature logic; it is **host hook a
 ## Current upstream audit
 
 - OpenCode `1.18.35` keeps the same missing host-hook situation as `1.18.30`; it is compatible with the existing patch, but it does not remove the need for it.
+- OpenCode `1.19.4` still needs the same host hooks. Its only upstream conflict with the previous patch was removal of the built-in share/unshare session commands, so this addon carries a dedicated `1.19.4.patch` without those obsolete hunks.
 - The `v2.x` source line has a more capable TUI plugin architecture, but until it is a published stable release and the submit/busy-session semantics are audited end-to-end, it should be treated as a separate migration spike rather than a patch-reduction target for this alpha line.

@@ -120,6 +120,7 @@ await runCli("adopt-local-install", async (options) => {
   const bunPath = detectBunPath(options.bunPath);
   const runtimeBinary = await ensureBuiltOpencodeBinary({
     checkoutRoot: sourceTarget.root,
+    checkoutVersion: sourceTarget.version,
     bunPath,
     dryRun: options.dryRun,
   });

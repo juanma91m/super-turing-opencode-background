@@ -6,7 +6,7 @@ Esta guía documenta el flujo **soportado real** del add-on `opencode-background
 
 Scope soportado hoy:
 
-- OpenCode **1.14.39**, **1.14.41**, **1.14.42**, **1.14.46**, **1.14.48**, **1.14.49**, **1.15.0**, **1.15.3**, **1.15.6**, **1.15.13**, **1.16.2**, **1.17.15**, **1.17.20**, **1.18.17**, **1.18.18**, **1.18.30** o **1.18.35**
+- OpenCode **1.14.39**, **1.14.41**, **1.14.42**, **1.14.46**, **1.14.48**, **1.14.49**, **1.15.0**, **1.15.3**, **1.15.6**, **1.15.13**, **1.16.2**, **1.17.15**, **1.17.20**, **1.18.17**, **1.18.18**, **1.18.30**, **1.18.35** o **1.19.4**
 - modo `patched-source-checkout`
 - modo `managed-local-install` sobre `~/.opencode`
 - `managed-local-install` validado en **Linux x64**
@@ -17,7 +17,7 @@ Esto **no** es todavía una instalación `plugin-only` sobre builds oficiales de
 
 - `node`
 - `git`
-- un checkout fuente compatible de OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49`, `1.15.0`, `1.15.3`, `1.15.6`, `1.15.13`, `1.16.2`, `1.17.15`, `1.17.20`, `1.18.17`, `1.18.18`, `1.18.30` o `1.18.35`
+- un checkout fuente compatible de OpenCode `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49`, `1.15.0`, `1.15.3`, `1.15.6`, `1.15.13`, `1.16.2`, `1.17.15`, `1.17.20`, `1.18.17`, `1.18.18`, `1.18.30`, `1.18.35` o `1.19.4`
 - para `managed-local-install`: `bun`; si falta, el installer estable puede
   bootstrappear la versión fijada en un runtime user-space propio
 - permisos para escribir en:
@@ -151,20 +151,20 @@ Esperado después de una adopción sana:
 - `runtimeBinaryPath` apunta dentro de `~/.opencode/bin/`
 - el launcher ya no referencia `/tmp`
 - `auxiliaryBinEntries` no reporta symlinks rotos
-- el comando instalado devuelve una build del add-on del estilo `0.0.0--<timestamp>`
+- el comando instalado devuelve una build del add-on del estilo `<opencode-version>--<timestamp>`
 
 Ejemplo de validación fresca del lifecycle:
 
 ```bash
 opencode --version
-0.0.0--<timestamp>
+1.19.4--<timestamp>
 ```
 
-Si reconstruís el runtime desde otra build, el sufijo timestamp puede variar. Lo importante es que ya no esté ejecutando la versión local original `1.14.39`, `1.14.41`, `1.14.42`, `1.14.46`, `1.14.48`, `1.14.49`, `1.15.0`, `1.15.3`, `1.15.6`, `1.15.13`, `1.16.2`, `1.17.15`, `1.17.20`, `1.18.17`, `1.18.18`, `1.18.30` o `1.18.35` del install previo.
+Si reconstruís el runtime desde otra build, el sufijo timestamp puede variar. El prefijo identifica la versión fuente de OpenCode y el sufijo identifica la build administrada; no debe volver a mostrarse la versión local original sin ese sufijo.
 
 ### 4. Actualizar una instalación ya adoptada a otra versión soportada
 
-Si ya estabas en `managed-local-install` sobre otra versión soportada y querés pasar a la versión preferida actual (`1.18.35`):
+Si ya estabas en `managed-local-install` sobre otra versión soportada y querés pasar a la versión preferida actual (`1.19.4`):
 
 1. restaurá el install actual:
 
