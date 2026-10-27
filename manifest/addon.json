@@ -24,7 +24,8 @@
       "installFile": "background-agents.ts",
       "compatibleInstalledHashes": [
         "c856dd218753c6f1e544d6e65a5e801ba25559680214908be24bfeee4a9dcfaf",
-        "7001f1f40e5199cdc6e4a7e97356b5975d4711a20f8b8ef49fcef41247bb1710"
+        "7001f1f40e5199cdc6e4a7e97356b5975d4711a20f8b8ef49fcef41247bb1710",
+        "bdf92ff644d4636a114f85cfd23d783266523ad8834c91d4270ba18485ded839"
       ]
     },
     {

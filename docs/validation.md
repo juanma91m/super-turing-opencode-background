@@ -1,5 +1,45 @@
 # Validation guide
 
+## Responsibility-scoped catalog
+
+Run `node --test test/*.test.mjs` for the existing lifecycle tests and the catalog
+regressions. These execute the actual TypeScript policy/handlers with host I/O
+fixtures; they do not launch a model, delegation or worktree. The test-only loader
+must not be copied into the runtime plugin or exported as another plugin factory.
+That test loader uses Node's experimental `stripTypeScriptTypes` API (validated
+with Node 22.23.2); this is a test prerequisite, not a new plugin runtime dependency.
+
+For opt-in native plugin-loading and host-contract checks, set:
+
+```bash
+OPENCODE_BACKGROUND_NATIVE=1 \
+OPENCODE_BACKGROUND_DEPS=/absolute/path/to/existing/node_modules \
+OPENCODE_RUNTIME_SOURCE=/absolute/path/to/the/matching/opencode-source \
+node --test test/catalog-visibility.test.mjs
+```
+
+The native fixture uses a separate HOME/XDG/config/data directory and existing
+dependencies, disables provider-plugin discovery and model metadata fetches, and
+loads the complete candidate Background plugin. `opencode debug config` and
+`debug agent` inspect its resolved config/catalog without executing tools. Missing
+opt-ins are reported as skipped tests, not evidence of native validation.
+
+Before promotion, compare global and every applicable project profile, both
+canonical and installed assets. Expect only four concrete deny rules for active
+non-master roles. `master-dev`, disabled agents, native identity/defaults and all
+other permissions/metadata must remain unchanged. Test wildcard order, repeated
+composition, unknown configured agents, existing master denies/ask/tool flags,
+session restrictions and child message masks. Preserve the read-only delegation
+matrix and the nine other Background tools; hidden agents are not disabled agents.
+
+Direct handler/validator fixtures must still reject unauthorized callers even
+when a schema is forcibly exposed, before worktree/Git/session/state mutations.
+Positive cases reach only fixture managers; invalid targets, nested launch,
+unreviewed/unaccepted states, dirty workspace and invalid patch remain rejected.
+Do not claim real-worktree, LLM-obedience, end-to-end delegation, token, latency or
+quality results from these checks. A stock managed plugin hash may be replaced
+only with its required backup; unknown modified hashes must still be refused.
+
 ## Smoke validation
 
 Run against a supported source checkout:

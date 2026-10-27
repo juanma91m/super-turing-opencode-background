@@ -17,6 +17,29 @@ Este add-on empaqueta la experiencia de background tasks que hoy permite:
 
 Con la instalación completa del add-on, los agentes pasan a conocer y usar estas capacidades de forma autónoma porque el plugin server/runtime expone las tools y reglas necesarias, mientras el plugin TUI aporta la UX visible.
 
+### Catálogo por responsabilidad
+
+El hook de configuración oculta `delegate_isolated`, `delegation_accept`,
+`delegation_apply` y `delegation_discard` en los roles distintos de `master-dev`,
+incluidos los agentes locales y los nativos. Compone cuatro permisos `deny` después
+de cargar los overlays, sin editar sus archivos ni añadir allows. `master-dev` y
+los roles deshabilitados no se modifican; se preservan restricciones adicionales
+de proyecto, sesión y mensaje, incluso las de una hija `master-dev`.
+
+**Nadie pierde una delegación background válida:** `delegate` read-only conserva
+su matriz de callers/targets, `master-dev` conserva el flujo aislado que ya tenía,
+y la función TUI de enviar una sesión a background no cambia. La poda retira
+schemas de operaciones que runtime ya rechazaba para esos callers. No usar un
+wildcard `delegation_*` para deshabilitar seguimiento, lectura o cancelación.
+
+Las guardas de caller/target, profundidad, estado, ownership y patch/workspace
+siguen siendo necesarias: el catálogo no reemplaza enforcement, y otro plugin o
+un override de sesión podría reexponer una tool sin otorgarle autoridad. El hook
+actúa en memoria, no reescribe configuraciones. Para activarlo o revertirlo hay
+que reiniciar OpenCode; no hace falta crear copias de agentes en cada proyecto.
+La lista de nativos del host y la superficie registrada tienen tests de drift;
+no se asume compatibilidad con futuros nativos no declarados.
+
 ## Cómo está empaquetado
 
 Hoy el add-on se distribuye como:

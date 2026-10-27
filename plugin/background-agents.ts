@@ -190,6 +190,26 @@ const READ_ONLY_DELEGATION_MATRIX: Record<string, string[]> = {
 
 const ISOLATED_WRITE_TARGETS = new Set(["backend-java-developer", "frontend-web-developer", "master-dev"])
 
+const ISOLATED_WRITE_TOOLS = ["delegate_isolated", "delegation_accept", "delegation_apply", "delegation_discard"] as const
+const NATIVE_AGENT_NAMES = ["build", "plan", "general", "explore", "compaction", "title", "summary"] as const
+type PluginConfig = Parameters<NonNullable<Awaited<ReturnType<Plugin>>["config"]>>[0]
+
+function applyIsolatedToolVisibility(config: PluginConfig): void {
+  const agents = (config.agent ??= {})
+  const isolatedTools = new Set<string>(ISOLATED_WRITE_TOOLS)
+  for (const name of new Set([...Object.keys(agents), ...NATIVE_AGENT_NAMES])) {
+    const agent = agents[name]
+    // Never grant capabilities to master-dev or resurrect disabled agents.
+    if (name === "master-dev" || agent?.disable) continue
+    const current = agent?.permission
+    const existing = typeof current === "string" ? { "*": current } : current ?? {}
+    const permission = Object.fromEntries(Object.entries(existing).filter(([key]) => !isolatedTools.has(key)))
+    // Reinsert exact keys last: replacing them in place could let a later * win.
+    for (const tool of ISOLATED_WRITE_TOOLS) permission[tool] = "deny"
+    agents[name] = { ...agent, permission }
+  }
+}
+
 const ADJECTIVES = [
   "brisk",
   "calm",
@@ -2808,6 +2828,10 @@ export const BackgroundAgents: Plugin = async (ctx) => {
   const manager = new DelegationManager(client as OpencodeClient, worktreeClient, directory, baseDir, log)
 
   return {
+    config: async (config) => {
+      applyIsolatedToolVisibility(config)
+    },
+
     tool: {
       delegate: createDelegate(manager),
       same_session_task_list: createSameSessionTaskList(manager),
